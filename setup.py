@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 
 setup(
     name='fluence',
@@ -13,6 +13,7 @@ setup(
     entry_points={
         'console_scripts': [
             'serve = fluence.serve:serve',
+            'stark = fluence.stark_key:cli',
         ],
     },
 )
