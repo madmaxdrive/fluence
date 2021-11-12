@@ -4,7 +4,7 @@
 from starkware.cairo.common.alloc import alloc
 from starkware.cairo.common.cairo_builtins import (HashBuiltin, SignatureBuiltin)
 from starkware.cairo.common.hash import hash2
-from starkware.cairo.common.math import assert_nn
+from starkware.cairo.common.math import assert_nn, assert_not_zero
 from starkware.cairo.common.signature import verify_ecdsa_signature
 from starkware.starknet.common.messages import send_message_to_l1
 from starkware.starknet.common.syscalls import get_tx_signature
@@ -13,7 +13,24 @@ const TYPE_ERC20 = 1
 const TYPE_ERC721 = 2
 const WITHDRAW = 0
 
+const ASK = 0
+const BID = 1
+
+const STATE_NEW = 0
+const STATE_FULFILLED = 1
+const STATE_CANCELLED = 2
+
 const L1_CONTRACT_ADDRESS = (0x13095e61fC38a06041f2502FcC85ccF4100FDeFf)
+
+struct LimitOrder:
+    member user : felt
+    member bid : felt
+    member base_contract : felt
+    member base_token_id : felt
+    member quote_contract : felt
+    member quote_amount : felt
+    member state : felt
+end
 
 @storage_var
 func admin() -> (adm : felt):
@@ -29,6 +46,10 @@ end
 
 @storage_var
 func owner(token_id : felt, contract : felt) -> (usr : felt):
+end
+
+@storage_var
+func order(id : felt) -> (ord : LimitOrder):
 end
 
 @constructor
@@ -75,6 +96,16 @@ func get_owner{
 end
 
 @view
+func get_order{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    id : felt) -> (
+    ord : LimitOrder):
+    return order.read(id=id)
+end
+
+@external
 func register_contract{
     syscall_ptr : felt*,
     ecdsa_ptr : SignatureBuiltin*,
@@ -124,7 +155,7 @@ func withdraw{
         assert_nn(amountOrId)
 
         let (bal) = balance.read(user=user, contract=contract)
-        tempvar new_balance = bal - amountOrId
+        let new_balance = bal - amountOrId
         assert_nn(new_balance)
 
         balance.write(user, contract, new_balance)
@@ -172,6 +203,156 @@ func deposit{
 
         owner.write(amountOrId, contract, user)
     end
+
+    return ()
+end
+
+@external
+func create_order{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    id : felt,
+    user : felt,
+    bid : felt,
+    base_contract : felt,
+    base_token_id : felt,
+    quote_contract : felt,
+    quote_amount : felt):
+    alloc_locals
+
+    let (typ) = contract_type.read(contract=base_contract)
+    assert typ = TYPE_ERC721
+    let (typ) = contract_type.read(contract=quote_contract)
+    assert typ = TYPE_ERC20
+
+    let inputs : felt* = alloc()
+    inputs[0] = id
+    inputs[1] = bid
+    inputs[2] = base_contract
+    inputs[3] = base_token_id
+    inputs[4] = quote_contract
+    inputs[5] = quote_amount
+    verify_inputs_by_signature(user, 6, inputs)
+
+    local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
+    if bid == ASK:
+        let (usr) = owner.read(token_id=base_token_id, contract=base_contract)
+        assert usr = user
+
+        owner.write(base_token_id, base_contract, 0)
+    else:
+        let (bal) = balance.read(user=user, contract=quote_contract)
+        let new_balance = bal - quote_amount
+        assert_nn(new_balance)
+
+        balance.write(user, quote_contract, new_balance)
+    end
+
+    order.write(id, LimitOrder(
+        user=user,
+        bid=bid,
+        base_contract=base_contract,
+        base_token_id=base_token_id,
+        quote_contract=quote_contract,
+        quote_amount=quote_amount,
+        state=STATE_NEW))
+
+    return ()
+end
+
+@external
+func fulfill_order{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    id : felt,
+    user : felt):
+    alloc_locals
+
+    let inputs : felt* = alloc()
+    inputs[0] = id
+    verify_inputs_by_signature(user, 1, inputs)
+
+    let (local ord) = order.read(id)
+    assert_not_zero(ord.user)
+    assert ord.state = STATE_NEW
+
+    local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
+    if ord.bid == ASK:
+        let (bal) = balance.read(user=user, contract=ord.quote_contract)
+        let new_balance = bal - ord.quote_amount
+        assert_nn(new_balance)
+        balance.write(user, ord.quote_contract, new_balance)
+        
+        let (bal) = balance.read(user=ord.user, contract=ord.quote_contract)
+        balance.write(ord.user, ord.quote_contract, bal + ord.quote_amount)
+        
+        let (usr) = owner.read(token_id=ord.base_token_id, contract=ord.base_contract)
+        assert usr = 0
+        owner.write(ord.base_token_id, ord.base_contract, user)
+    else:
+        let (usr) = owner.read(token_id=ord.base_token_id, contract=ord.base_contract)
+        assert usr = user
+        owner.write(ord.base_token_id, ord.base_contract, ord.user)
+
+        let (bal) = balance.read(user=user, contract=ord.quote_contract)
+        balance.write(user, ord.quote_contract, bal + ord.quote_amount)
+    end
+
+    order.write(id, LimitOrder(
+        user=ord.user,
+        bid=ord.bid,
+        base_contract=ord.base_contract,
+        base_token_id=ord.base_token_id,
+        quote_contract=ord.quote_contract,
+        quote_amount=ord.quote_amount,
+        state=STATE_FULFILLED))
+
+    return ()
+end
+
+@external
+func cancel_order{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    id : felt):
+    alloc_locals
+
+    let (local ord) = order.read(id)
+    assert_not_zero(ord.user)
+    assert ord.state = STATE_NEW
+
+    let inputs : felt* = alloc()
+    inputs[0] = id
+    verify_inputs_by_signature(ord.user, 1, inputs)
+
+    local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
+    if ord.bid == ASK:
+        let (usr) = owner.read(token_id=ord.base_token_id, contract=ord.base_contract)
+        assert usr = 0
+
+        owner.write(ord.base_token_id, ord.base_contract, ord.user)
+    else:
+        let (bal) = balance.read(user=ord.user, contract=ord.quote_contract)
+        let new_balance = bal + ord.quote_amount
+        assert_nn(new_balance)
+
+        balance.write(ord.user, ord.quote_contract, new_balance)
+    end
+
+    order.write(id, LimitOrder(
+        user=ord.user,
+        bid=ord.bid,
+        base_contract=ord.base_contract,
+        base_token_id=ord.base_token_id,
+        quote_contract=ord.quote_contract,
+        quote_amount=ord.quote_amount,
+        state=STATE_CANCELLED))
 
     return ()
 end
