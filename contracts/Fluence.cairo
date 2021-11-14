@@ -222,6 +222,9 @@ func create_order{
     quote_amount : felt):
     alloc_locals
 
+    let (ord) = order.read(id=id)
+    assert ord.user = 0
+
     let (typ) = contract_type.read(contract=base_contract)
     assert typ = TYPE_ERC721
     let (typ) = contract_type.read(contract=quote_contract)

@@ -5,6 +5,7 @@ import pytest
 from starkware.crypto.signature.signature import private_to_stark_key
 from starkware.starknet.testing.contract import StarknetContract
 from starkware.starknet.testing.starknet import Starknet
+from starkware.starkware_utils.error_handling import StarkException
 
 CONTRACT_FILE = os.path.join(os.path.dirname(__file__), "Fluence.cairo")
 DEPOSIT_SELECTOR = 0xc73f681176fc7b3f9693986fd7b14581e8d540519e27400e88b8713932be01
@@ -120,6 +121,25 @@ async def test_create_order():
 
 
 @pytest.mark.asyncio
+async def test_create_order_signature_error():
+    (contract, starknet) = await deploy()
+    await register_erc20(contract)
+    await register_erc721(contract)
+    await deposit_erc20(contract, starknet)
+    with pytest.raises(StarkException):
+        await contract. \
+            create_order(id=13,
+                         user=STARK_KEY,
+                         bid=1,
+                         base_contract=ERC721_CONTRACT_ADDRESS,
+                         base_token_id=1,
+                         quote_contract=ERC20_CONTRACT_ADDRESS,
+                         quote_amount=1000). \
+            invoke(signature=[2465446976930601613313290689566494744681330957706968178237697175223930491083,
+                              1006396189397407373593107424743909871951296920275078297313951054563784940344])
+
+
+@pytest.mark.asyncio
 async def test_fulfill_order():
     (contract, starknet) = await create_order()
     stark_key2 = private_to_stark_key(7654321)
@@ -141,6 +161,22 @@ async def test_fulfill_order():
 
 
 @pytest.mark.asyncio
+async def test_fulfill_order_signature_error():
+    (contract, starknet) = await create_order()
+    stark_key2 = private_to_stark_key(7654321)
+    await starknet.send_message_to_l2(
+        L1_CONTRACT_ADDRESS,
+        contract.contract_address,
+        DEPOSIT_SELECTOR,
+        [stark_key2, 1, ERC721_CONTRACT_ADDRESS])
+    with pytest.raises(StarkException):
+        await contract. \
+            fulfill_order(id=13, user=stark_key2). \
+            invoke(signature=[3099844777896423566313244533041173744197403653087717556680642636268377158704,
+                              2305745516407173259381298230646736970464161483090057054847608490188660711971])
+
+
+@pytest.mark.asyncio
 async def test_cancel_order():
     (contract, starknet) = await create_order()
     await contract. \
@@ -158,3 +194,13 @@ async def test_cancel_order():
         state=2),)
     exec_info = await contract.get_balance(user=STARK_KEY, contract=ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result == (5050,)
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_signature_error():
+    (contract, starknet) = await create_order()
+    with pytest.raises(StarkException):
+        await contract. \
+            cancel_order(id=13). \
+            invoke(signature=[1225333364571694102780966770274162498671319402832892393464878774231250771955,
+                              1057704955418873148055702905195964974402056683545758651742227714526147095681])
