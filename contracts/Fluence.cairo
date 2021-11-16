@@ -105,25 +105,35 @@ func get_order{
     return order.read(id=id)
 end
 
-@external
+@l1_handler
 func register_contract{
     syscall_ptr : felt*,
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
+    from_address : felt,
     contract : felt,
     typ : felt):
+
+    #check from_addres
+    let (l1 : felt) = l1_contract_address.read()
+    assert from_address = l1
+
+    #check type
     assert (typ - TYPE_ERC20) * (typ - TYPE_ERC721) = 0
 
+    #check if contract if exist already
     let (typ0) = contract_type.read(contract=contract)
     assert typ0 = 0
 
-    let (adm) = admin.read()
-    let inputs : felt* = alloc()
-    inputs[0] = contract
-    inputs[1] = typ
-    verify_inputs_by_signature(adm, 2, inputs)
+    #check signature
+    #let (adm) = admin.read()
+    #let inputs : felt* = alloc()
+    #inputs[0] = contract
+    #inputs[1] = typ
+    #verify_inputs_by_signature(adm, 2, inputs)
 
+    #write contract
     contract_type.write(contract, typ)
 
     return ()

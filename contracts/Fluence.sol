@@ -12,15 +12,34 @@ contract Fluence is IERC721Receiver {
 
     uint256 constant WITHDRAW = 0;
     uint256 constant DEPOSIT = 0xc73f681176fc7b3f9693986fd7b14581e8d540519e27400e88b8713932be01;
+    uint256 constant REGISTER_CONTRACT = 0xe3f5e9e1456ffa52a3fbc7e8c296631d4cc2120c0be1e2829301c0d8fa026b;
 
     IStarknetCore starknetCore;
     mapping(address => TokenType) public contracts;
+    address admin;
 
-    constructor(IStarknetCore starknetCore_, IERC20 erc20_, IERC721 erc721_) {
+    constructor(IStarknetCore starknetCore_, address admin_) {
         starknetCore = starknetCore_;
+        admin = admin_;
+    }
 
-        contracts[address(erc20_)] = TokenType.ERC20;
-        contracts[address(erc721_)] = TokenType.ERC721;
+    function register_contract_ERC20(uint256 toContract, address token_address) external {
+        register_contract(toContract, token_address, 1,TokenType.ERC20);
+    }
+
+    function register_contract_ERC721(uint256 toContract, address token_address) external {
+        register_contract(toContract, token_address, 2, TokenType.ERC721);
+    }
+
+    function register_contract(uint256 toContract, address token_address, uint8 type_, TokenType tt) internal {
+        require(admin == msg.sender, "Unauthorized.");
+
+        contracts[address(token_address)] = tt;
+
+        uint256[] memory payload = new uint256[](2);
+        payload[0] = uint160(token_address);
+        payload[1] = type_;
+        starknetCore.sendMessageToL2(toContract, REGISTER_CONTRACT, payload);
     }
 
     function deposit(uint256 toContract, uint256 user, uint256 amountOrId, address fromContract) external {
@@ -65,7 +84,7 @@ contract Fluence is IERC721Receiver {
         address /* from */,
         uint256 /* tokenId */,
         bytes calldata /* data */
-    ) external pure returns (bytes4) {
+    ) override external pure returns (bytes4) {
         return IERC721Receiver.onERC721Received.selector;
     }
 }
