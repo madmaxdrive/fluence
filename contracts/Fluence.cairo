@@ -116,8 +116,8 @@ func register_contract{
     typ : felt):
 
     #check from_addres
-    let (l1 : felt) = l1_contract_address.read()
-    assert from_address = l1
+    #let (l1 : felt) = l1_contract_address.read() TODO: read from storage
+    assert from_address = L1_CONTRACT_ADDRESS
 
     #check type
     assert (typ - TYPE_ERC20) * (typ - TYPE_ERC721) = 0
