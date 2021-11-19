@@ -20,8 +20,6 @@ const STATE_NEW = 0
 const STATE_FULFILLED = 1
 const STATE_CANCELLED = 2
 
-const L1_CONTRACT_ADDRESS = (0x13095e61fC38a06041f2502FcC85ccF4100FDeFf)
-
 struct LimitOrder:
     member user : felt
     member bid : felt
@@ -30,6 +28,10 @@ struct LimitOrder:
     member quote_contract : felt
     member quote_amount : felt
     member state : felt
+end
+
+@storage_var
+func l1_contract_address() -> (address : felt):
 end
 
 @storage_var
@@ -57,7 +59,9 @@ func constructor{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
+    l1_caddr: felt,
     adm : felt):
+    l1_contract_address.write(value=l1_caddr)
     admin.write(value=adm)
 
     return ()
@@ -166,13 +170,14 @@ func withdraw{
         owner.write(amountOrId, contract, 0)
     end
 
+    let (l1_caddr) = l1_contract_address.read()
     let (payload : felt*) = alloc()
     assert payload[0] = WITHDRAW
     assert payload[1] = address
     assert payload[2] = amountOrId
     assert payload[3] = contract
     send_message_to_l1(
-        to_address=L1_CONTRACT_ADDRESS,
+        to_address=l1_caddr,
         payload_size=4,
         payload=payload)
 
@@ -188,7 +193,8 @@ func deposit{
     user : felt,
     amountOrId : felt,
     contract : felt):
-    assert from_address = L1_CONTRACT_ADDRESS
+    let (l1_caddr) = l1_contract_address.read()
+    assert from_address = l1_caddr
 
     let (typ) = contract_type.read(contract=contract)
     assert (typ - TYPE_ERC20) * (typ - TYPE_ERC721) = 0

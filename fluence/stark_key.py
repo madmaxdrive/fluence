@@ -48,6 +48,12 @@ def cli():
     pass
 
 
+@cli.command('tell')
+@click.argument('private_key', type=int)
+def tell(private_key):
+    print(private_to_stark_key(private_key))
+
+
 @cli.command('derive')
 @click.option('--layer', default='starknet')
 @click.option('--application', default='fluence')

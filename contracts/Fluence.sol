@@ -23,6 +23,14 @@ contract Fluence is IERC721Receiver {
         contracts[address(erc721_)] = TokenType.ERC721;
     }
 
+    function deposit(uint256 toContract, uint256 user) external payable {
+        uint256[] memory payload = new uint256[](3);
+        payload[0] = user;
+        payload[1] = msg.value;
+        payload[2] = 0;
+        starknetCore.sendMessageToL2(toContract, DEPOSIT, payload);
+    }
+
     function deposit(uint256 toContract, uint256 user, uint256 amountOrId, address fromContract) external {
         TokenType typ_ = contracts[fromContract];
         require(typ_ != TokenType.Z, "Unregistered contract.");
@@ -42,9 +50,9 @@ contract Fluence is IERC721Receiver {
         starknetCore.sendMessageToL2(toContract, DEPOSIT, payload);
     }
 
-    function withdraw(uint256 fromContract, address user, uint256 amountOrId, address toContract) external {
+    function withdraw(uint256 fromContract, address payable user, uint256 amountOrId, address toContract) external {
         TokenType typ_ = contracts[toContract];
-        require(typ_ != TokenType.Z, "Unregistered contract.");
+        require(toContract == address(0) || typ_ != TokenType.Z, "Unregistered contract.");
 
         uint256[] memory payload = new uint256[](4);
         payload[0] = WITHDRAW;
@@ -53,7 +61,9 @@ contract Fluence is IERC721Receiver {
         payload[3] = uint160(toContract);
         starknetCore.consumeMessageFromL2(fromContract, payload);
 
-        if (typ_ == TokenType.ERC20) {
+        if (toContract == address(0)) {
+            user.transfer(amountOrId);
+        } else if (typ_ == TokenType.ERC20) {
             IERC20(toContract).transfer(user, amountOrId);
         } else {
             IERC721(toContract).safeTransferFrom(address(this), user, amountOrId);

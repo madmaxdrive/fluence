@@ -80,6 +80,97 @@ async def withdraw(request: Request):
     return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
 
 
+@routes.get('/api/v1/orders/{id}')
+async def get_order(request: Request):
+    signature = list(map(integer, request.query['signature'].split(',')))
+    oid = integer(request.match_info['id'])
+    tx = InvokeFunction(
+        contract_address=config('CONTRACT_ADDRESS', cast=integer),
+        entry_point_selector=get_selector_from_name('get_order'),
+        calldata=[oid],
+        signature=signature)
+
+    feeder_client = FeederGatewayClient(
+        url=config('FEEDER_GATEWAY_URL'),
+        retry_config=RetryConfig(n_retries=1))
+    gateway_response = await feeder_client.call_contract(tx)
+    result = gateway_response['result']
+
+    return web.json_response({
+        'user': result[0],
+        'bid': integer(result[1]),
+        'base_contract': result[2],
+        'base_token_id': integer(result[3]),
+        'quote_contract': result[4],
+        'quote_amount': integer(result[5]),
+        'state': integer(result[6]),
+    })
+
+
+@routes.put('/api/v1/orders/{id}')
+async def create_order(request: Request):
+    signature = list(map(integer, request.query['signature'].split(',')))
+    oid = integer(request.match_info['id'])
+    data = await request.json()
+    tx = InvokeFunction(
+        contract_address=config('CONTRACT_ADDRESS', cast=integer),
+        entry_point_selector=get_selector_from_name('create_order'),
+        calldata=[
+            oid,
+            integer(data['user']),
+            integer(data['bid']),
+            integer(data['base_contract']),
+            integer(data['base_token_id']),
+            integer(data['quote_contract']),
+            integer(data['quote_amount']),
+        ],
+        signature=signature)
+
+    gateway_client = GatewayClient(
+        url=config('GATEWAY_URL'),
+        retry_config=RetryConfig(n_retries=1))
+    gateway_response = await gateway_client.add_transaction(tx)
+
+    return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
+
+
+@routes.delete('/api/v1/orders/{id}')
+async def cancel_order(request: Request):
+    signature = list(map(integer, request.query['signature'].split(',')))
+    oid = integer(request.match_info['id'])
+    tx = InvokeFunction(
+        contract_address=config('CONTRACT_ADDRESS', cast=integer),
+        entry_point_selector=get_selector_from_name('cancel_order'),
+        calldata=[oid],
+        signature=signature)
+
+    gateway_client = GatewayClient(
+        url=config('GATEWAY_URL'),
+        retry_config=RetryConfig(n_retries=1))
+    gateway_response = await gateway_client.add_transaction(tx)
+
+    return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
+
+
+@routes.post('/api/v1/orders/{id}')
+async def fulfill_order(request: Request):
+    signature = list(map(integer, request.query['signature'].split(',')))
+    oid = integer(request.match_info['id'])
+    data = await request.json()
+    tx = InvokeFunction(
+        contract_address=config('CONTRACT_ADDRESS', cast=integer),
+        entry_point_selector=get_selector_from_name('fulfill_order'),
+        calldata=[oid, integer(data['user'])],
+        signature=signature)
+
+    gateway_client = GatewayClient(
+        url=config('GATEWAY_URL'),
+        retry_config=RetryConfig(n_retries=1))
+    gateway_response = await gateway_client.add_transaction(tx)
+
+    return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
+
+
 def serve():
     app = web.Application()
     app.add_routes(routes)
