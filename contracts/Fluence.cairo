@@ -9,8 +9,8 @@ from starkware.cairo.common.signature import verify_ecdsa_signature
 from starkware.starknet.common.messages import send_message_to_l1
 from starkware.starknet.common.syscalls import get_tx_signature
 
-const TYPE_ERC20 = 1
-const TYPE_ERC721 = 2
+const KIND_ERC20 = 1
+const KIND_ERC721 = 2
 const WITHDRAW = 0
 
 const ASK = 0
@@ -19,6 +19,11 @@ const BID = 1
 const STATE_NEW = 0
 const STATE_FULFILLED = 1
 const STATE_CANCELLED = 2
+
+struct ContractDescription:
+    member kind : felt		# ERC20 / ERC721
+    member mint : felt		# minter
+end
 
 struct LimitOrder:
     member user : felt
@@ -39,7 +44,7 @@ func admin() -> (adm : felt):
 end
 
 @storage_var
-func contract_type(contract : felt) -> (typ : felt):
+func description(contract : felt) -> (desc : ContractDescription):
 end
 
 @storage_var
@@ -48,6 +53,10 @@ end
 
 @storage_var
 func owner(token_id : felt, contract : felt) -> (usr : felt):
+end
+
+@storage_var
+func origin(token_id : felt, contract : felt) -> (org : felt):
 end
 
 @storage_var
@@ -68,13 +77,13 @@ func constructor{
 end
 
 @view
-func get_type{
+func describe{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
     contract : felt) -> (
-    typ : felt):
-    return contract_type.read(contract=contract)
+    desc : ContractDescription):
+    return description.read(contract=contract)
 end
 
 @view
@@ -100,6 +109,17 @@ func get_owner{
 end
 
 @view
+func get_origin{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    token_id : felt,
+    contract : felt) -> (
+    org : felt):
+    return origin.read(token_id=token_id, contract=contract)
+end
+
+@view
 func get_order{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
@@ -116,19 +136,50 @@ func register_contract{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
     contract : felt,
-    typ : felt):
-    assert (typ - TYPE_ERC20) * (typ - TYPE_ERC721) = 0
+    kind : felt,
+    mint : felt):
+    assert (kind - KIND_ERC20) * (kind - KIND_ERC721) = 0
 
-    let (typ0) = contract_type.read(contract=contract)
-    assert typ0 = 0
+    let (desc) = description.read(contract=contract)
+    assert desc.kind = 0
 
     let (adm) = admin.read()
     let inputs : felt* = alloc()
     inputs[0] = contract
-    inputs[1] = typ
-    verify_inputs_by_signature(adm, 2, inputs)
+    inputs[1] = kind
+    inputs[2] = mint
+    verify_inputs_by_signature(adm, 3, inputs)
 
-    contract_type.write(contract, typ)
+    description.write(contract, ContractDescription(
+        kind=kind,
+	mint=mint))
+
+    return ()
+end
+
+@external
+func mint{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+        user : felt,
+        token_id : felt,
+        contract : felt):
+    let (usr) = owner.read(token_id, contract)
+    assert usr = 0
+
+    let (desc) = description.read(contract=contract)
+    assert desc.kind = KIND_ERC721
+
+    let inputs : felt* = alloc()
+    inputs[0] = user
+    inputs[1] = token_id
+    inputs[2] = contract
+    verify_inputs_by_signature(desc.mint, 3, inputs)
+
+    owner.write(token_id, contract, user)
+    origin.write(token_id, contract, 1)
 
     return ()
 end
@@ -152,10 +203,11 @@ func withdraw{
     verify_inputs_by_signature(user, 3, inputs)
 
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
-    let (typ) = contract_type.read(contract=contract)
-    assert (typ - TYPE_ERC20) * (typ - TYPE_ERC721) = 0
+    let (desc) = description.read(contract=contract)
+    assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
 
-    if typ == TYPE_ERC20:
+    let (local org) = origin.read(amountOrId, contract)
+    if desc.kind == KIND_ERC20:
         assert_nn(amountOrId)
 
         let (bal) = balance.read(user=user, contract=contract)
@@ -168,6 +220,7 @@ func withdraw{
         assert usr = user
 
         owner.write(amountOrId, contract, 0)
+        origin.write(amountOrId, contract, 0)
     end
 
     let (l1_caddr) = l1_contract_address.read()
@@ -176,9 +229,10 @@ func withdraw{
     assert payload[1] = address
     assert payload[2] = amountOrId
     assert payload[3] = contract
+    assert payload[4] = org
     send_message_to_l1(
         to_address=l1_caddr,
-        payload_size=4,
+        payload_size=5,
         payload=payload)
 
     return ()
@@ -196,10 +250,10 @@ func deposit{
     let (l1_caddr) = l1_contract_address.read()
     assert from_address = l1_caddr
 
-    let (typ) = contract_type.read(contract=contract)
-    assert (typ - TYPE_ERC20) * (typ - TYPE_ERC721) = 0
+    let (desc) = description.read(contract=contract)
+    assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
 
-    if typ == TYPE_ERC20:
+    if desc.kind == KIND_ERC20:
         let (bal) = balance.read(user=user, contract=contract)
 
         balance.write(user, contract, bal + amountOrId)
@@ -231,10 +285,10 @@ func create_order{
     let (ord) = order.read(id=id)
     assert ord.user = 0
 
-    let (typ) = contract_type.read(contract=base_contract)
-    assert typ = TYPE_ERC721
-    let (typ) = contract_type.read(contract=quote_contract)
-    assert typ = TYPE_ERC20
+    let (desc) = description.read(contract=base_contract)
+    assert desc.kind = KIND_ERC721
+    let (desc) = description.read(contract=quote_contract)
+    assert desc.kind = KIND_ERC20
 
     let inputs : felt* = alloc()
     inputs[0] = id
@@ -295,10 +349,10 @@ func fulfill_order{
         let new_balance = bal - ord.quote_amount
         assert_nn(new_balance)
         balance.write(user, ord.quote_contract, new_balance)
-        
+
         let (bal) = balance.read(user=ord.user, contract=ord.quote_contract)
         balance.write(ord.user, ord.quote_contract, bal + ord.quote_amount)
-        
+
         let (usr) = owner.read(token_id=ord.base_token_id, contract=ord.base_contract)
         assert usr = 0
         owner.write(ord.base_token_id, ord.base_contract, user)

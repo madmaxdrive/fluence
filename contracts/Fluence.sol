@@ -2,9 +2,10 @@
 
 pragma solidity ^0.8.0;
 
-import "./IERC20.sol";
-import "./IERC721.sol";
-import "./IERC721Receiver.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import "./IMintable.sol";
 import "./IStarknetCore.sol";
 
 contract Fluence is IERC721Receiver {
@@ -50,22 +51,25 @@ contract Fluence is IERC721Receiver {
         starknetCore.sendMessageToL2(toContract, DEPOSIT, payload);
     }
 
-    function withdraw(uint256 fromContract, address payable user, uint256 amountOrId, address toContract) external {
+    function withdraw(uint256 fromContract, address payable user, uint256 amountOrId, address toContract, bool mint) external {
         TokenType typ_ = contracts[toContract];
         require(toContract == address(0) || typ_ != TokenType.Z, "Unregistered contract.");
 
-        uint256[] memory payload = new uint256[](4);
+        uint256[] memory payload = new uint256[](5);
         payload[0] = WITHDRAW;
         payload[1] = uint160(msg.sender);
         payload[2] = amountOrId;
         payload[3] = uint160(toContract);
+	payload[4] = mint ? 1 : 0;
         starknetCore.consumeMessageFromL2(fromContract, payload);
 
         if (toContract == address(0)) {
             user.transfer(amountOrId);
         } else if (typ_ == TokenType.ERC20) {
             IERC20(toContract).transfer(user, amountOrId);
-        } else {
+        } else if (mint) {
+	    IMintable(toContract).mintFor(user, amountOrId);
+	} else {
             IERC721(toContract).safeTransferFrom(address(this), user, amountOrId);
         }
     }
