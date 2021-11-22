@@ -9,6 +9,7 @@ from starkware.starkware_utils.error_handling import StarkException
 
 CONTRACT_FILE = os.path.join(os.path.dirname(__file__), 'Fluence.cairo')
 DEPOSIT_SELECTOR = 0xc73f681176fc7b3f9693986fd7b14581e8d540519e27400e88b8713932be01
+REGISTER_CONTRACT_SELECTOR = 0xe3f5e9e1456ffa52a3fbc7e8c296631d4cc2120c0be1e2829301c0d8fa026b
 L1_ACCOUNT_ADDRESS = 0xFe02793B075106bFC519d6EE667fAcBB11fBB373
 L1_CONTRACT_ADDRESS = 0x13095e61fC38a06041f2502FcC85ccF4100FDeFf
 ERC20_CONTRACT_ADDRESS = 0x4A26C7daCcC90434693de4b8bede3151884cab89
@@ -31,18 +32,20 @@ async def deploy() -> (StarknetContract, Starknet):
     return contract, starknet
 
 
-async def register_erc20(contract: StarknetContract):
-    await contract. \
-        register_contract(contract=ERC20_CONTRACT_ADDRESS, kind=1, mint=0). \
-        invoke(signature=[1040302778488900885995715727188983454701846885575652720241032325773354024307,
-                          2867792894179518793519514720111467633171252211380211604856023727227534298549])
+async def register_erc20(contract: StarknetContract, starknet: Starknet):
+    await starknet.send_message_to_l2(
+        L1_CONTRACT_ADDRESS,
+        contract.contract_address,
+        REGISTER_CONTRACT_SELECTOR,
+        [ERC20_CONTRACT_ADDRESS, 1, 0])
 
 
-async def register_erc721(contract: StarknetContract):
-    await contract. \
-        register_contract(contract=ERC721_CONTRACT_ADDRESS, kind=2, mint=STARK_KEY2). \
-        invoke(signature=[1274094155647753343189890341185455658190953648171308105349997586431932779297,
-                          754112723632681262228747561198921262618101272387413111475965410311638431105])
+async def register_erc721(contract: StarknetContract, starknet: Starknet):
+    await starknet.send_message_to_l2(
+        L1_CONTRACT_ADDRESS,
+        contract.contract_address,
+        REGISTER_CONTRACT_SELECTOR,
+        [ERC721_CONTRACT_ADDRESS, 2, STARK_KEY2])
 
 
 async def deposit_erc20(contract: StarknetContract, starknet: Starknet):
@@ -62,8 +65,8 @@ async def mint(contract: StarknetContract):
 
 async def create_order() -> (StarknetContract, Starknet):
     (contract, starknet) = await deploy()
-    await register_erc20(contract)
-    await register_erc721(contract)
+    await register_erc20(contract, starknet)
+    await register_erc721(contract, starknet)
     await deposit_erc20(contract, starknet)
     await contract. \
         create_order(id=13,
@@ -81,8 +84,8 @@ async def create_order() -> (StarknetContract, Starknet):
 
 @pytest.mark.asyncio
 async def test_register():
-    (contract, _) = await deploy()
-    await register_erc20(contract)
+    (contract, starknet) = await deploy()
+    await register_erc20(contract, starknet)
     exec_info = await contract.describe(ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result == (ContractDescription(1, 0),)
 
@@ -90,7 +93,7 @@ async def test_register():
 @pytest.mark.asyncio
 async def test_deposit():
     (contract, starknet) = await deploy()
-    await register_erc20(contract)
+    await register_erc20(contract, starknet)
     await deposit_erc20(contract, starknet)
     exec_info = await contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result == (5050,)
@@ -99,7 +102,7 @@ async def test_deposit():
 @pytest.mark.asyncio
 async def test_withdraw():
     (contract, starknet) = await deploy()
-    await register_erc20(contract)
+    await register_erc20(contract, starknet)
     await deposit_erc20(contract, starknet)
     await contract. \
         withdraw(user=STARK_KEY,
@@ -119,7 +122,7 @@ async def test_withdraw():
 @pytest.mark.asyncio
 async def test_mint():
     (contract, starknet) = await deploy()
-    await register_erc721(contract)
+    await register_erc721(contract, starknet)
     await mint(contract)
     exec_info = await contract.get_owner(2, ERC721_CONTRACT_ADDRESS).call()
     assert exec_info.result == (STARK_KEY,)
@@ -130,7 +133,7 @@ async def test_mint():
 @pytest.mark.asyncio
 async def test_withdraw_mint():
     (contract, starknet) = await deploy()
-    await register_erc721(contract)
+    await register_erc721(contract, starknet)
     await mint(contract)
     await contract. \
         withdraw(user=STARK_KEY,
@@ -168,8 +171,8 @@ async def test_create_order():
 @pytest.mark.asyncio
 async def test_create_order_signature_error():
     (contract, starknet) = await deploy()
-    await register_erc20(contract)
-    await register_erc721(contract)
+    await register_erc20(contract, starknet)
+    await register_erc721(contract, starknet)
     await deposit_erc20(contract, starknet)
     with pytest.raises(StarkException):
         await contract. \

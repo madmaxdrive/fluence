@@ -24,7 +24,7 @@ import "./IMintable.sol";
  * well as the default admin role, which will let it grant minter role to other
  * accounts.
  */
-contract ERC721PresetMinterPauserAutoId is
+contract ERC721PresetMinter is
     Context,
     AccessControlEnumerable,
     ERC721Enumerable,

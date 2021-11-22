@@ -129,30 +129,27 @@ func get_order{
     return order.read(id=id)
 end
 
-@external
+@l1_handler
 func register_contract{
     syscall_ptr : felt*,
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
+    from_address : felt,
     contract : felt,
     kind : felt,
     mint : felt):
     assert (kind - KIND_ERC20) * (kind - KIND_ERC721) = 0
 
+    let (l1_caddr) = l1_contract_address.read()
+    assert l1_caddr = from_address
+
     let (desc) = description.read(contract=contract)
     assert desc.kind = 0
 
-    let (adm) = admin.read()
-    let inputs : felt* = alloc()
-    inputs[0] = contract
-    inputs[1] = kind
-    inputs[2] = mint
-    verify_inputs_by_signature(adm, 3, inputs)
-
     description.write(contract, ContractDescription(
         kind=kind,
-	mint=mint))
+    	mint=mint))
 
     return ()
 end
@@ -166,11 +163,11 @@ func mint{
         user : felt,
         token_id : felt,
         contract : felt):
-    let (usr) = owner.read(token_id, contract)
-    assert usr = 0
-
     let (desc) = description.read(contract=contract)
     assert desc.kind = KIND_ERC721
+
+    let (usr) = owner.read(token_id, contract)
+    assert usr = 0
 
     let inputs : felt* = alloc()
     inputs[0] = user
@@ -248,7 +245,7 @@ func deposit{
     amountOrId : felt,
     contract : felt):
     let (l1_caddr) = l1_contract_address.read()
-    assert from_address = l1_caddr
+    assert l1_caddr = from_address
 
     let (desc) = description.read(contract=contract)
     assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
