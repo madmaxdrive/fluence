@@ -53,7 +53,9 @@ contract Fluence is IERC721Receiver {
 
         if (typ_ == TokenType.ERC20) {
             IERC20 erc20 = IERC20(fromContract);
-            erc20.transferFrom(msg.sender, address(this), amountOrId);
+            bool succeeded = erc20.transferFrom(msg.sender, address(this), amountOrId);
+
+            require(succeeded, "Transfer failure.");
         } else {
             IERC721 erc721 = IERC721(fromContract);
             erc721.safeTransferFrom(msg.sender, address(this), amountOrId);
@@ -75,7 +77,7 @@ contract Fluence is IERC721Receiver {
         payload[1] = uint160(msg.sender);
         payload[2] = amountOrId;
         payload[3] = uint160(toContract);
-	payload[4] = mint ? 1 : 0;
+        payload[4] = mint ? 1 : 0;
         starknetCore.consumeMessageFromL2(fromContract, payload);
 
         if (toContract == address(0)) {
@@ -83,8 +85,8 @@ contract Fluence is IERC721Receiver {
         } else if (typ_ == TokenType.ERC20) {
             IERC20(toContract).transfer(user, amountOrId);
         } else if (mint) {
-	    IMintable(toContract).mintFor(user, amountOrId);
-	} else {
+            IMintable(toContract).mintFor(user, amountOrId);
+        } else {
             IERC721(toContract).safeTransferFrom(address(this), user, amountOrId);
         }
     }

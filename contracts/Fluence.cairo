@@ -160,9 +160,9 @@ func mint{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-        user : felt,
-        token_id : felt,
-        contract : felt):
+    user : felt,
+    token_id : felt,
+    contract : felt):
     let (desc) = description.read(contract=contract)
     assert desc.kind = KIND_ERC721
 
