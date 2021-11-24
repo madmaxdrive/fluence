@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Burnable.sol";
 import "@openzeppelin/contracts/access/AccessControlEnumerable.sol";
 import "@openzeppelin/contracts/utils/Context.sol";
-import "./IMintable.sol";
+import "@imtbl/imx-contracts/contracts/Mintable.sol";
 
 /**
  * @dev {ERC721} token, including:
@@ -29,12 +29,11 @@ contract ERC721PresetMinter is
     AccessControlEnumerable,
     ERC721Enumerable,
     ERC721Burnable,
-    IMintable
+    Mintable
 {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
     string private _baseTokenURI;
-    address private _tap;
 
     /**
      * @dev Grants `DEFAULT_ADMIN_ROLE` and `MINTER_ROLE` to the account that
@@ -48,9 +47,8 @@ contract ERC721PresetMinter is
         string memory symbol,
         string memory baseTokenURI,
 	address tap
-    ) ERC721(name, symbol) {
+    ) ERC721(name, symbol) Mintable(msg.sender, tap) {
         _baseTokenURI = baseTokenURI;
-	_tap = tap;
 
         _setupRole(DEFAULT_ADMIN_ROLE, _msgSender());
 
@@ -77,9 +75,7 @@ contract ERC721PresetMinter is
         _mint(to, tokenId);
     }
 
-    function mintFor(address to, uint256 tokenId) public virtual {
-	require(msg.sender == _tap, "ERC721PresetMinter: must be tap to mint");
-
+    function _mintFor(address to, uint256 tokenId, bytes memory /* blueprint */) internal virtual override(Mintable) {
 	_mint(to, tokenId);
     }
 
@@ -98,9 +94,9 @@ contract ERC721PresetMinter is
         public
         view
         virtual
-        override(AccessControlEnumerable, ERC721, ERC721Enumerable, IERC165)
+        override(AccessControlEnumerable, ERC721, ERC721Enumerable)
         returns (bool)
     {
-        return interfaceId == type(IMintable).interfaceId || super.supportsInterface(interfaceId);
+        return super.supportsInterface(interfaceId);
     }
 }

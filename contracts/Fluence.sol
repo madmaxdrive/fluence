@@ -5,7 +5,8 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import "./IMintable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+import "@imtbl/imx-contracts/contracts/IMintable.sol";
 import "./IStarknetCore.sol";
 
 contract Fluence is IERC721Receiver {
@@ -85,7 +86,7 @@ contract Fluence is IERC721Receiver {
         } else if (typ_ == TokenType.ERC20) {
             IERC20(toContract).transfer(user, amountOrId);
         } else if (mint) {
-            IMintable(toContract).mintFor(user, amountOrId);
+	    IMintable(toContract).mintFor(user, 1, abi.encodePacked("{", Strings.toString(amountOrId), "}:{}"));
         } else {
             IERC721(toContract).safeTransferFrom(address(this), user, amountOrId);
         }
