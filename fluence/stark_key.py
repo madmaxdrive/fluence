@@ -1,4 +1,5 @@
 import functools
+import os
 from hashlib import sha256
 from struct import pack
 
@@ -46,6 +47,11 @@ def derive_seed(account: Account, message: str) -> bytes:
 @click.group()
 def cli():
     pass
+
+
+@cli.command('rand')
+def seed():
+    print(int.from_bytes(os.urandom(32), byteorder='big') % EC_ORDER)
 
 
 @cli.command('tell')
