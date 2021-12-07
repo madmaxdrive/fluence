@@ -48,6 +48,10 @@ func description(contract : felt) -> (desc : ContractDescription):
 end
 
 @storage_var
+func client(address : felt) -> (usr : felt):
+end
+
+@storage_var
 func balance(user : felt, contract : felt) -> (bal : felt):
 end
 
@@ -84,6 +88,16 @@ func describe{
     contract : felt) -> (
     desc : ContractDescription):
     return description.read(contract=contract)
+end
+
+@view
+func get_client{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    address : felt) -> (
+    usr : felt):
+    return client.read(address=address)
 end
 
 @view
@@ -150,6 +164,26 @@ func register_contract{
     description.write(contract, ContractDescription(
         kind=kind,
     	mint=mint))
+
+    return ()
+end
+
+@external
+func register_client{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    user : felt,
+    address : felt):
+    let (usr) = client.read(address=address)
+    assert usr = 0
+
+    let inputs : felt* = alloc()
+    inputs[0] = address
+    verify_inputs_by_signature(user, 1, inputs)
+
+    client.write(address, user)
 
     return ()
 end
