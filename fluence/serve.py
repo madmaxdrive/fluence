@@ -72,6 +72,39 @@ async def mint(request: Request):
 
         return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
 
+@routes.post('/api/v1/register/client')
+async def register_client(request: Request):
+    signature = list(map(integer, request.query['signature'].split(',')))
+    data = await request.json()
+    public_key = integer(data['public_key'])
+    address = integer(data['address'])
+    tx = InvokeFunction(
+        contract_address=config('L2_CONTRACT_ADDRESS', cast=integer),
+        entry_point_selector=get_selector_from_name('register_client'),
+        calldata=[public_key, address],
+        signature=signature)
+
+    gateway_client = GatewayClient(
+        url=config('GATEWAY_URL'),
+        retry_config=RetryConfig(n_retries=1))
+    gateway_response = await gateway_client.add_transaction(tx)
+    return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
+
+
+@routes.get('/api/v1/get/client')
+async def get_client(request: Request):
+    address = integer(request.query['address'])
+    tx = InvokeFunction(
+        contract_address=config('L2_CONTRACT_ADDRESS', cast=integer),
+        entry_point_selector=get_selector_from_name('get_client'),
+        calldata=[address],
+        signature=[])
+    feeder_client = FeederGatewayClient(
+        url=config('FEEDER_GATEWAY_URL'),
+        retry_config=RetryConfig(n_retries=1))
+    gateway_response = await feeder_client.call_contract(tx)
+    return web.json_response({'public_key': gateway_response['result'][0]})
+
 
 @routes.get('/api/v1/balance')
 async def get_balance(request: Request):
