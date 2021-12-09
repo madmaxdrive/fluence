@@ -6,12 +6,16 @@ setup(
     packages=['fluence'],
     install_requires=[
         'aiohttp',
+        'aiohttp-sqlalchemy',
+        'asyncpg',
         'cairo-lang',
         'click',
         'python-decouple',
+        'sqlalchemy',
     ],
     entry_points={
         'console_scripts': [
+            'crawl = fluence.crawl:crawl',
             'serve = fluence.serve:serve',
             'stark = fluence.stark_key:cli',
         ],

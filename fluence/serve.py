@@ -166,13 +166,12 @@ async def withdraw(request: Request):
 
 @routes.get('/api/v1/orders/{id}')
 async def get_order(request: Request):
-    signature = list(map(integer, request.query['signature'].split(',')))
     oid = integer(request.match_info['id'])
     tx = InvokeFunction(
         contract_address=config('L2_CONTRACT_ADDRESS', cast=integer),
         entry_point_selector=get_selector_from_name('get_order'),
         calldata=[oid],
-        signature=signature)
+        signature=[])
 
     feeder_client = FeederGatewayClient(
         url=config('FEEDER_GATEWAY_URL'),
