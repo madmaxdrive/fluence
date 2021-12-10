@@ -1,4 +1,5 @@
 import functools
+from time import time
 from typing import Union
 
 from aiohttp import web
@@ -56,13 +57,14 @@ async def mint(request: Request):
     if token in [2]:
         user = integer(user)
         contract = integer(contract)
+        nonce = int(time())
         message_hash = functools.reduce(
             lambda x, y: pedersen_hash(y, x),
-            reversed([user, amount_or_token_id, contract]), 0)
+            reversed([user, amount_or_token_id, contract, nonce]), 0)
         tx = InvokeFunction(
             contract_address=config('L2_CONTRACT_ADDRESS', cast=integer),
             entry_point_selector=get_selector_from_name('mint'),
-            calldata=[user, amount_or_token_id, contract],
+            calldata=[user, amount_or_token_id, contract, nonce],
             signature=list(sign(msg_hash=message_hash, priv_key=config('L2_MINT_PRIVATE_KEY', cast=integer))))
 
         gateway_client = GatewayClient(
@@ -71,6 +73,7 @@ async def mint(request: Request):
         gateway_response = await gateway_client.add_transaction(tx)
 
         return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
+
 
 @routes.get('/api/v1/tx')
 async def getTxStatus(request: Request):
@@ -82,16 +85,19 @@ async def getTxStatus(request: Request):
 
     return web.json_response({'transaction_hash': gateway_response})
 
+
+@routes.post('/api/v1/clients')
 @routes.post('/api/v1/register/client')
 async def register_client(request: Request):
     signature = list(map(integer, request.query['signature'].split(',')))
     data = await request.json()
     public_key = integer(data['public_key'])
     address = integer(data['address'])
+    nonce = integer(data['nonce'])
     tx = InvokeFunction(
         contract_address=config('L2_CONTRACT_ADDRESS', cast=integer),
         entry_point_selector=get_selector_from_name('register_client'),
-        calldata=[public_key, address],
+        calldata=[public_key, address, nonce],
         signature=signature)
 
     gateway_client = GatewayClient(
@@ -101,6 +107,7 @@ async def register_client(request: Request):
     return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
 
 
+@routes.get('/api/v1/clients')
 @routes.get('/api/v1/get/client')
 async def get_client(request: Request):
     address = integer(request.query['address'])
@@ -161,10 +168,11 @@ async def withdraw(request: Request):
     amount_or_token_id = integer(data['amount_or_token_id'])
     contract = integer(data['contract'])
     address = integer(data['address'])
+    nonce = integer(data['nonce'])
     tx = InvokeFunction(
         contract_address=config('L2_CONTRACT_ADDRESS', cast=integer),
         entry_point_selector=get_selector_from_name('withdraw'),
-        calldata=[user, amount_or_token_id, contract, address],
+        calldata=[user, amount_or_token_id, contract, address, nonce],
         signature=signature)
 
     gateway_client = GatewayClient(
@@ -232,10 +240,11 @@ async def create_order(request: Request):
 async def cancel_order(request: Request):
     signature = list(map(integer, request.query['signature'].split(',')))
     oid = integer(request.match_info['id'])
+    nonce = integer(request.query['nonce'])
     tx = InvokeFunction(
         contract_address=config('L2_CONTRACT_ADDRESS', cast=integer),
         entry_point_selector=get_selector_from_name('cancel_order'),
-        calldata=[oid],
+        calldata=[oid, nonce],
         signature=signature)
 
     gateway_client = GatewayClient(
@@ -254,7 +263,7 @@ async def fulfill_order(request: Request):
     tx = InvokeFunction(
         contract_address=config('L2_CONTRACT_ADDRESS', cast=integer),
         entry_point_selector=get_selector_from_name('fulfill_order'),
-        calldata=[oid, integer(data['user'])],
+        calldata=[oid, integer(data['user']), integer(data['nonce'])],
         signature=signature)
 
     gateway_client = GatewayClient(

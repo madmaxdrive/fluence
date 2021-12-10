@@ -175,13 +175,15 @@ func register_client{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
     user : felt,
-    address : felt):
+    address : felt,
+    nonce : felt):
     let (usr) = client.read(address=address)
     assert usr = 0
 
     let inputs : felt* = alloc()
     inputs[0] = address
-    verify_inputs_by_signature(user, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(user, 2, inputs)
 
     client.write(address, user)
 
@@ -196,7 +198,8 @@ func mint{
     range_check_ptr}(
     user : felt,
     token_id : felt,
-    contract : felt):
+    contract : felt,
+    nonce : felt):
     let (desc) = description.read(contract=contract)
     assert desc.kind = KIND_ERC721
 
@@ -207,7 +210,8 @@ func mint{
     inputs[0] = user
     inputs[1] = token_id
     inputs[2] = contract
-    verify_inputs_by_signature(desc.mint, 3, inputs)
+    inputs[3] = nonce
+    verify_inputs_by_signature(desc.mint, 4, inputs)
 
     owner.write(token_id, contract, user)
     origin.write(token_id, contract, 1)
@@ -224,14 +228,16 @@ func withdraw{
     user : felt,
     amountOrId : felt,
     contract : felt,
-    address : felt):
+    address : felt,
+    nonce : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = amountOrId
     inputs[1] = contract
     inputs[2] = address
-    verify_inputs_by_signature(user, 3, inputs)
+    inputs[3] = nonce
+    verify_inputs_by_signature(user, 4, inputs)
 
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
     let (desc) = description.read(contract=contract)
@@ -363,12 +369,14 @@ func fulfill_order{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
     id : felt,
-    user : felt):
+    user : felt,
+    nonce : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = id
-    verify_inputs_by_signature(user, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(user, 2, inputs)
 
     let (local ord) = order.read(id)
     assert_not_zero(ord.user)
@@ -414,7 +422,8 @@ func cancel_order{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    id : felt):
+    id : felt,
+    nonce : felt):
     alloc_locals
 
     let (local ord) = order.read(id)
@@ -423,7 +432,8 @@ func cancel_order{
 
     let inputs : felt* = alloc()
     inputs[0] = id
-    verify_inputs_by_signature(ord.user, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(ord.user, 2, inputs)
 
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
     if ord.bid == ASK:
