@@ -2,6 +2,8 @@ from sqlalchemy import Column, Integer, String, JSON, ForeignKey
 from sqlalchemy.orm import relationship
 from .Base import Base
 
+TYPE_DEPLOY = 'DEPLOY'
+
 
 class Transaction(Base):
     __tablename__ = 'transaction'

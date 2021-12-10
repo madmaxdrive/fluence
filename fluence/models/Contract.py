@@ -8,5 +8,6 @@ class Contract(Base):
 
     id = Column(Integer, primary_key=True)
     address = Column(String, unique=True, nullable=False)
+    block_counter = Column(Integer)
 
     transactions = relationship('Transaction', back_populates='contract')

@@ -16,6 +16,7 @@ setup(
     entry_points={
         'console_scripts': [
             'crawl = fluence.crawl:crawl',
+            'interpret = fluence.interpret:cli',
             'serve = fluence.serve:serve',
             'stark = fluence.stark_key:cli',
         ],

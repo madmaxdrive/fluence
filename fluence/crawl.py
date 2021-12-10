@@ -1,28 +1,15 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
-from decouple import config
-from services.external_api.base_client import RetryConfig, BadRequest
+import click
+from services.external_api.base_client import BadRequest
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import sessionmaker
-from starkware.starknet.services.api.feeder_gateway.feeder_gateway_client import FeederGatewayClient
 
 from fluence.models import Block, Transaction, Contract
-
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-feeder_client = FeederGatewayClient(
-    url=config('FEEDER_GATEWAY_URL'),
-    retry_config=RetryConfig(n_retries=1))
-engine = create_async_engine(
-        config('ASYNC_DATABASE_URL'),
-        echo=False,
-    )
-async_session = sessionmaker(
-        engine, expire_on_commit=False, class_=AsyncSession
-    )
+from fluence.services import async_session, feeder_client
 
 
 class BlockCache:
@@ -88,15 +75,15 @@ async def crawl_block(block_number: int, cache: BlockCache):
     await persist_block(block)
 
 
-async def do_crawl():
-    block = await feeder_client.get_block()
-    i = j = block['block_number']
+async def do_crawl(to_block):
+    block = await feeder_client.get_block(block_hash=to_block)
+    i = j = block['block_number'] + 1
     bc = BlockCache()
 
     loop = asyncio.get_running_loop()
     cd = loop.time()
     while True:
-        if cd < loop.time():
+        if to_block is None and cd < loop.time():
             try:
                 await crawl_block(j, bc)
                 j += 1
@@ -114,5 +101,7 @@ async def do_crawl():
         await asyncio.sleep(15)
 
 
-def crawl():
-    asyncio.run(do_crawl())
+@click.command()
+@click.argument('to_block', required=False)
+def crawl(to_block):
+    asyncio.run(do_crawl(to_block))
