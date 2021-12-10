@@ -72,6 +72,16 @@ async def mint(request: Request):
 
         return web.json_response({'transaction_hash': gateway_response['transaction_hash']})
 
+@routes.get('/api/v1/tx')
+async def getTxStatus(request: Request):
+    hash = request.query['hash']
+    feeder_client = FeederGatewayClient(
+        url=config('FEEDER_GATEWAY_URL'),
+        retry_config=RetryConfig(n_retries=1))
+    gateway_response = await feeder_client.get_transaction_status(hash)
+
+    return web.json_response({'transaction_hash': gateway_response})
+
 @routes.post('/api/v1/register/client')
 async def register_client(request: Request):
     signature = list(map(integer, request.query['signature'].split(',')))
@@ -103,6 +113,7 @@ async def get_client(request: Request):
         url=config('FEEDER_GATEWAY_URL'),
         retry_config=RetryConfig(n_retries=1))
     gateway_response = await feeder_client.call_contract(tx)
+
     return web.json_response({'public_key': gateway_response['result'][0]})
 
 
