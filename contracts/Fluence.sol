@@ -2,6 +2,7 @@
 
 pragma solidity ^0.8.0;
 
+import "@openzeppelin/contracts/metatx/ERC2771Context.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
@@ -9,7 +10,7 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 import "@imtbl/imx-contracts/contracts/IMintable.sol";
 import "./IStarknetCore.sol";
 
-contract Fluence is IERC721Receiver {
+contract Fluence is IERC721Receiver, ERC2771Context {
     enum TokenType { Z, ERC20, ERC721 }
 
     uint256 constant WITHDRAW = 0;
@@ -21,13 +22,13 @@ contract Fluence is IERC721Receiver {
 
     mapping(address => TokenType) public contracts;
 
-    constructor(IStarknetCore starknetCore_) {
+    constructor(IStarknetCore starknetCore_, address trustedForwarder) ERC2771Context(trustedForwarder) {
         starknetCore = starknetCore_;
         admin = msg.sender;
     }
 
     function registerContract(uint256 toContract, address tokenContract, TokenType tokenType, uint256 minter) external {
-        require(admin == msg.sender, "Unauthorized.");
+        require(admin == _msgSender(), "Unauthorized.");
         require(tokenType == TokenType.ERC20 || tokenType == TokenType.ERC721, "Bad token type.");
         require(contracts[tokenContract] == TokenType.Z, "Registered contract.");
 
@@ -54,12 +55,12 @@ contract Fluence is IERC721Receiver {
 
         if (typ_ == TokenType.ERC20) {
             IERC20 erc20 = IERC20(fromContract);
-            bool succeeded = erc20.transferFrom(msg.sender, address(this), amountOrId);
+            bool succeeded = erc20.transferFrom(_msgSender(), address(this), amountOrId);
 
             require(succeeded, "Transfer failure.");
         } else {
             IERC721 erc721 = IERC721(fromContract);
-            erc721.safeTransferFrom(msg.sender, address(this), amountOrId);
+            erc721.safeTransferFrom(_msgSender(), address(this), amountOrId);
         }
 
         uint256[] memory payload = new uint256[](3);
@@ -75,7 +76,7 @@ contract Fluence is IERC721Receiver {
 
         uint256[] memory payload = new uint256[](5);
         payload[0] = WITHDRAW;
-        payload[1] = uint160(msg.sender);
+        payload[1] = uint160(_msgSender());
         payload[2] = amountOrId;
         payload[3] = uint160(toContract);
         payload[4] = mint ? 1 : 0;

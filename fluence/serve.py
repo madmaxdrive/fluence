@@ -2,9 +2,11 @@ import functools
 from time import time
 from typing import Union
 
+import pkg_resources
 from aiohttp import web
 from aiohttp.web_request import Request
 from decouple import config
+from py_eth_sig_utils.signing import sign_typed_data, v_r_s_to_signature
 from services.external_api.base_client import RetryConfig
 from starkware.crypto.signature.fast_pedersen_hash import pedersen_hash
 from starkware.crypto.signature.signature import sign
@@ -15,6 +17,8 @@ from starkware.starknet.services.api.gateway.transaction import InvokeFunction
 from web3 import Web3
 
 routes = web.RouteTableDef()
+flu_abi = pkg_resources.resource_string(__name__, 'abi/Fluence.abi').decode()
+fwr_abi = pkg_resources.resource_string(__name__, 'abi/MinimalForwarder.abi').decode()
 
 
 def integer(x: Union[int, str]) -> int:
@@ -30,6 +34,72 @@ def integer(x: Union[int, str]) -> int:
 ABI = '[{"inputs":[{"internalType":"address","name":"to","type":"address"},' \
       '{"internalType":"uint256","name":"tokenId","type":"uint256"}],' \
       '"name":"mint","outputs":[],"stateMutability":"nonpayable","type":"function"}]'
+
+EIP712Domain = [
+    {'name': 'name', 'type': 'string'},
+    {'name': 'version', 'type': 'string'},
+    {'name': 'chainId', 'type': 'uint256'},
+    {'name': 'verifyingContract', 'type': 'address'},
+]
+
+domain = {
+    'name': 'MinimalForwarder',
+    'version': '0.0.1',
+    'chainId': Web3().eth.chain_id,
+    'verifyingContract': config('L1_VERIFYING_CONTRACT'),
+}
+
+types = {
+    'EIP712Domain': EIP712Domain,
+    'ForwardRequest': [
+        {'name': 'from', 'type': 'address'},
+        {'name': 'to', 'type': 'address'},
+        {'name': 'value', 'type': 'uint256'},
+        {'name': 'gas', 'type': 'uint256'},
+        {'name': 'nonce', 'type': 'uint256'},
+        {'name': 'data', 'type': 'bytes'},
+    ],
+}
+
+
+@routes.get('/api/v1/contracts')
+async def get_contracts():
+    return web.json_response({
+        'fluence': config('L1_CONTRACT_ADDRESS'),
+        'forwarder': config('L1_VERIFYING_CONTRACT'),
+    })
+
+
+@routes.post('/api/v1/contracts')
+async def register_contract(request: Request):
+    data = await request.json()
+    w3 = Web3()
+    fwr_contract = w3.eth.contract(config('L1_VERIFYING_CONTRACT'), abi=fwr_abi)
+    flu_contract = w3.eth.contract(abi=flu_abi)
+    encoded = flu_contract.encodeABI('registerContract', args=[
+        config('L2_CONTRACT_ADDRESS', cast=integer),
+        data['contract'],
+        2,
+        integer(data['minter'])
+    ])
+    account = w3.eth.account.from_key(config('L1_MINT_PRIVATE_KEY'))
+    req = {
+        'from': account.address,
+        'to': config('L1_CONTRACT_ADDRESS'),
+        'value': 0,
+        'gas': 100000,
+        'nonce': fwr_contract.functions['getNonce'](account.address).call(),
+        'data': encoded,
+    }
+    data = {
+        'types': types,
+        'domain': domain,
+        'primaryType': 'ForwardRequest',
+        'message': req,
+    }
+    signature = v_r_s_to_signature(*sign_typed_data(data, account.key))
+
+    return web.json_response({'signature': signature.hex()})
 
 
 @routes.post('/api/v1/mint')

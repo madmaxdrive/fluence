@@ -4,12 +4,16 @@ setup(
     name='fluence',
     version='0.0.1',
     packages=['fluence'],
+    package_data={
+        'fluence': ['abi/*'],
+    },
     install_requires=[
         'aiohttp',
         'aiohttp-sqlalchemy',
         'asyncpg',
         'cairo-lang',
         'click',
+        'py-eth-sig-utils',
         'python-decouple',
         'sqlalchemy',
     ],
