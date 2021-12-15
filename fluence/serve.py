@@ -99,7 +99,7 @@ async def register_contract(request: Request):
     }
     signature = v_r_s_to_signature(*sign_typed_data(data, account.key))
 
-    return web.json_response({'signature': signature.hex()})
+    return web.json_response({'req': req, 'signature': w3.toHex(signature)})
 
 
 @routes.post('/api/v1/mint')
