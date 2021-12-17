@@ -33,9 +33,11 @@ class Forwarder:
             name: str,
             version: str,
             verifying_contract: ChecksumAddress,
+            to_address: ChecksumAddress,
             account: LocalAccount,
             w3: Web3):
         self.account = account
+        self.to_address = to_address
         self.contract = w3.eth.contract(
             verifying_contract,
             abi=pkg_resources.resource_string(__name__, 'abi/FluenceForwarder.abi').decode())
@@ -46,17 +48,17 @@ class Forwarder:
             'verifyingContract': verifying_contract,
         }
 
-    def forward(self, call_data, to_address: ChecksumAddress, gas: int):
+    def forward(self, calldata, gas: int):
         batch = uuid4().int
         nonce = self.contract.functions['getNonce'](self.account.address, batch).call()
         req = {
             'from': self.account.address,
-            'to': to_address,
+            'to': self.to_address,
             'value': 0,
             'gas': gas,
             'batch': batch,
             'nonce': nonce,
-            'data': call_data,
+            'data': calldata,
         }
         data = {
             'types': types,

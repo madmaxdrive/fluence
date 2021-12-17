@@ -5,7 +5,7 @@ setup(
     version='0.0.1',
     packages=['fluence'],
     package_data={
-        'fluence': ['abi/*'],
+        'fluence.contracts': ['abi/*'],
     },
     install_requires=[
         'aiohttp',
