@@ -120,7 +120,7 @@ async def get_orders(request: Request):
         def augment(stmt):
             if user:
                 stmt = stmt.join(LimitOrder.user). \
-                    where(Account.ethereum_address == user)
+                    where(Account.address == user)
             if collection:
                 stmt = stmt.join(LimitOrder.token). \
                     join(Token.contract). \

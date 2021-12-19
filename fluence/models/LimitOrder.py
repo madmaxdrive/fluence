@@ -52,7 +52,7 @@ class LimitOrder(Base):
 
 class LimitOrderSchema(Schema):
     order_id = fields.String()
-    user = fields.Function(lambda lo: lo.user.ethereum_address)
+    user = fields.Function(lambda lo: lo.user.address)
     bid = fields.Boolean()
     token = fields.Nested(TokenSchema())
     quote_contract = fields.Nested(TokenContractSchema())

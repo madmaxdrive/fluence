@@ -13,10 +13,10 @@ class Transaction(Base):
     block_number = Column(Integer, ForeignKey('block.id'), nullable=False)
     transaction_index = Column(Integer, nullable=False)
     type = Column(String, nullable=False)
-    contract_id = Column(Integer, ForeignKey('contract.id'), nullable=False)
+    contract_id = Column(Integer, ForeignKey('stark_contract.id'), nullable=False)
     entry_point_selector = Column(String)
     entry_point_type = Column(String)
     calldata = Column(JSON, nullable=False)
 
     block = relationship('Block', back_populates='transactions')
-    contract = relationship('Contract', back_populates='transactions')
+    contract = relationship('StarkContract', back_populates='transactions')

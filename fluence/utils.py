@@ -10,3 +10,7 @@ def parse_int(n: Union[int, str]):
 
 def to_address(address) -> ChecksumAddress:
     return Web3.toChecksumAddress('%040x' % parse_int(address))
+
+
+ZERO_ADDRESS = to_address(0)
+IERC721_METADATA = '0x5b5e139f'

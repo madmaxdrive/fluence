@@ -13,9 +13,15 @@ class TokenContract(Base):
     id = Column(Integer, primary_key=True)
     address = Column(String, unique=True, nullable=False)
     fungible = Column(Boolean, nullable=False)
+    name = Column(String)
+    symbol = Column(String)
+    decimals = Column(Integer)
 
     tokens = relationship('Token', back_populates='contract')
 
 
 class TokenContractSchema(Schema):
     address = fields.String()
+    name = fields.String()
+    symbol = fields.String()
+    decimals = fields.Integer()

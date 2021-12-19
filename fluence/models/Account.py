@@ -8,6 +8,6 @@ class Account(Base):
 
     id = Column(Integer, primary_key=True)
     stark_key = Column(Numeric(precision=80), nullable=False)
-    ethereum_address = Column(String)
+    address = Column(String)
 
     tokens = relationship('Token', back_populates='owner')

@@ -4,22 +4,25 @@ from decimal import Decimal
 from typing import Optional
 
 import click
+import pkg_resources
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from web3 import Web3
 
-from fluence.models import Account, TokenContract, Token, LimitOrder, Block, Contract
+from fluence.models import Account, TokenContract, Token, LimitOrder, Block, StarkContract
 from fluence.models.LimitOrder import Side
 from fluence.models.TokenContract import KIND_ERC721
 from fluence.models.Transaction import Transaction, TYPE_DEPLOY
 from fluence.services import async_session
-from fluence.utils import to_address, parse_int
+from fluence.utils import to_address, parse_int, ZERO_ADDRESS, IERC721_METADATA
 
 
 class FluenceInterpreter:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, w3: Web3):
         self.session = session
+        self.w3 = w3
 
     async def exec(self, tx: Transaction):
         instructions = {
@@ -41,7 +44,7 @@ class FluenceInterpreter:
         logging.warning(f'register_contract')
         _from_address, contract, kind, _mint = tx.calldata
         token_contract = TokenContract(address=to_address(contract), fungible=int(kind) != KIND_ERC721)
-        self.session.add(token_contract)
+        self.session.add(self.lift_contract(token_contract))
 
     async def register_client(self, tx: Transaction):
         logging.warning(f'register_client')
@@ -133,7 +136,7 @@ class FluenceInterpreter:
             self.session.add(account)
 
         if address:
-            account.ethereum_address = to_address(address)
+            account.address = to_address(address)
 
         return account
 
@@ -157,13 +160,40 @@ class FluenceInterpreter:
 
         return token
 
+    def lift_contract(self, token_contract: TokenContract) -> TokenContract:
+        if token_contract.address == ZERO_ADDRESS:
+            token_contract.name, token_contract.symbol, token_contract.decimals = 'Ether', 'ETH', 18
+
+            return token_contract
+
+        if token_contract.fungible:
+            contract = self.w3.eth.contract(
+                token_contract.address,
+                abi=pkg_resources.resource_string(__name__, 'contracts/abi/ERC20.abi').decode())
+            token_contract.name = contract.functions['name']().call()
+            token_contract.symbol = contract.functions['symbol']().call()
+            token_contract.decimals = contract.functions['decimals']().call()
+        else:
+            contract = self.w3.eth.contract(
+                token_contract.address,
+                abi=pkg_resources.resource_string(__name__, 'contracts/abi/IERC165.abi').decode())
+            if contract.functions['supportsInterface'](IERC721_METADATA).call():
+                contract = self.w3.eth.contract(
+                    token_contract.address,
+                    abi=pkg_resources.resource_string(__name__, 'contracts/abi/IERC721Metadata.abi').decode())
+                token_contract.name = contract.functions['name']().call()
+                token_contract.symbol = contract.functions['symbol']().call()
+                token_contract.decimals = 0
+
+        return token_contract
+
 
 async def interpret(address: str):
     while True:
         async with async_session() as session:
             try:
                 contract, = (await session.execute(
-                    select(Contract).where(Contract.address == address))).one()
+                    select(StarkContract).where(StarkContract.address == address))).one()
             except NoResultFound:
                 logging.warning('Failed to find contract')
                 await asyncio.sleep(15)
@@ -186,12 +216,12 @@ async def interpret(address: str):
             try:
                 block, = (await session.execute(
                     select(Block).where(Block.id == contract.block_counter))).one()
-                interpreter = FluenceInterpreter(session)
+                interpreter = FluenceInterpreter(session, Web3())
                 for tx, in await session.execute(
-                    select(Transaction).
-                    where(Transaction.block == block).
-                    where(Transaction.contract == contract).
-                    order_by(Transaction.transaction_index)):
+                        select(Transaction).
+                        where(Transaction.block == block).
+                        where(Transaction.contract == contract).
+                        order_by(Transaction.transaction_index)):
                     logging.warning(f'interpret(tx={tx.hash})')
                     await interpreter.exec(tx)
 

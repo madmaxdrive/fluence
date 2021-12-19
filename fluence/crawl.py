@@ -9,7 +9,7 @@ from sqlalchemy.future import select
 from sqlalchemy.orm import sessionmaker
 from starkware.starknet.services.api.feeder_gateway.feeder_gateway_client import FeederGatewayClient
 
-from fluence.models import Block, Transaction, Contract
+from fluence.models import Block, Transaction, StarkContract
 
 
 class BlockCache:
@@ -85,10 +85,10 @@ class Crawler:
                 assert receipt['transaction_hash'] == transaction['transaction_hash']
                 try:
                     contract, = (await session.execute(
-                        select(Contract).
-                        where(Contract.address == transaction['contract_address']))).one()
+                        select(StarkContract).
+                        where(StarkContract.address == transaction['contract_address']))).one()
                 except NoResultFound:
-                    contract = Contract(address=transaction['contract_address'])
+                    contract = StarkContract(address=transaction['contract_address'])
                     session.add(contract)
 
                 tx = Transaction(
