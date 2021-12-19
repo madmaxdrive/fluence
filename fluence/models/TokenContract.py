@@ -1,3 +1,4 @@
+from marshmallow import Schema, fields
 from sqlalchemy import Column, Integer, Boolean, String, ForeignKey
 from sqlalchemy.orm import relationship
 from .Base import Base
@@ -14,3 +15,7 @@ class TokenContract(Base):
     fungible = Column(Boolean, nullable=False)
 
     tokens = relationship('Token', back_populates='contract')
+
+
+class TokenContractSchema(Schema):
+    address = fields.String()

@@ -8,17 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from web3 import Web3
 
 from fluence.models import Account, TokenContract, Token, LimitOrder, Block, Contract
-from fluence.models.LimitOrder import BID
+from fluence.models.LimitOrder import Side
 from fluence.models.TokenContract import KIND_ERC721
 from fluence.models.Transaction import Transaction, TYPE_DEPLOY
 from fluence.services import async_session
-
-
-def to_address(address: str) -> str:
-    return Web3.toChecksumAddress('%20x' % int(address))
+from fluence.utils import to_address, parse_int
 
 
 class FluenceInterpreter:
@@ -43,18 +39,18 @@ class FluenceInterpreter:
 
     async def register_contract(self, tx: Transaction):
         logging.warning(f'register_contract')
-        [_from_address, contract, kind, _mint] = tx.calldata
+        _from_address, contract, kind, _mint = tx.calldata
         token_contract = TokenContract(address=to_address(contract), fungible=int(kind) != KIND_ERC721)
         self.session.add(token_contract)
 
     async def register_client(self, tx: Transaction):
         logging.warning(f'register_client')
-        [user, address] = tx.calldata
+        user, address = tx.calldata[:2]
         await self.lift_account(user, address)
 
     async def mint(self, tx: Transaction):
         logging.warning(f'mint')
-        [user, token_id, contract] = tx.calldata
+        user, token_id, contract = tx.calldata[:3]
         token = await self.lift_token(token_id, contract)
         token.latest_tx = tx
 
@@ -62,7 +58,7 @@ class FluenceInterpreter:
 
     async def withdraw(self, tx: Transaction):
         logging.warning(f'withdraw')
-        [_user, amount_or_id, contract, _address] = tx.calldata
+        _user, amount_or_id, contract, _address = tx.calldata[:4]
         token = await self.lift_token(amount_or_id, contract)
         if token:
             token.owner = None
@@ -70,7 +66,7 @@ class FluenceInterpreter:
 
     async def deposit(self, tx: Transaction):
         logging.warning(f'deposit')
-        [_from_address, user, amount_or_id, contract] = tx.calldata
+        _from_address, user, amount_or_id, contract = tx.calldata
         account = await self.lift_account(user)
         token = await self.lift_token(amount_or_id, contract)
         if token:
@@ -79,16 +75,16 @@ class FluenceInterpreter:
 
     async def create_order(self, tx: Transaction):
         logging.warning(f'create_order')
-        [order_id, user, bid, base_contract, base_token_id, quote_contract, quote_amount] = tx.calldata
+        order_id, user, bid, base_contract, base_token_id, quote_contract, quote_amount = tx.calldata
         account = await self.lift_account(user)
         token = await self.lift_token(base_token_id, base_contract)
-        (quote_contract,) = (await self.session.execute(
+        quote_contract, = (await self.session.execute(
             select(TokenContract).where(TokenContract.address == to_address(quote_contract)))).one()
 
         limit_order = LimitOrder(
             order_id=Decimal(order_id),
             user=account,
-            bid=int(bid) == BID,
+            bid=parse_int(bid) == Side.BID,
             token=token,
             quote_contract=quote_contract,
             quote_amount=Decimal(quote_amount),
@@ -99,8 +95,8 @@ class FluenceInterpreter:
 
     async def fulfill_order(self, tx: Transaction):
         logging.warning(f'fulfill_order')
-        [order_id, user] = tx.calldata
-        (limit_order,) = (await self.session.execute(
+        order_id, user = tx.calldata[:2]
+        limit_order, = (await self.session.execute(
             select(LimitOrder).where(LimitOrder.order_id == Decimal(order_id)))).one()
         limit_order.closed_tx = tx
         limit_order.fulfilled = True
@@ -116,9 +112,11 @@ class FluenceInterpreter:
 
     async def cancel_order(self, tx: Transaction):
         logging.warning(f'cancel_order')
-        [order_id] = tx.calldata
-        (limit_order,) = (await self.session.execute(
-            select(LimitOrder).where(LimitOrder.order_id == Decimal(order_id)))).one()
+        order_id, = tx.calldata[:1]
+        limit_order, = (await self.session.execute(
+            select(LimitOrder).
+            where(LimitOrder.order_id == Decimal(order_id)).
+            options(selectinload(LimitOrder.token)))).one()
         limit_order.closed_tx = tx
         limit_order.fulfilled = False
         limit_order.token.ask = None
@@ -127,7 +125,7 @@ class FluenceInterpreter:
         user = Decimal(user)
 
         try:
-            (account,) = (await self.session.execute(
+            account, = (await self.session.execute(
                 select(Account).
                 where(Account.stark_key == user))).one()
         except NoResultFound:
@@ -143,13 +141,13 @@ class FluenceInterpreter:
         token_id = Decimal(token_id)
         contract = to_address(contract)
 
-        (token_contract,) = (await self.session.execute(
+        token_contract, = (await self.session.execute(
             select(TokenContract).where(TokenContract.address == contract))).one()
         if token_contract.fungible:
             return None
 
         try:
-            (token,) = (await self.session.execute(
+            token, = (await self.session.execute(
                 select(Token).
                 where(Token.token_id == token_id).
                 where(Token.contract == token_contract))).one()
@@ -164,7 +162,7 @@ async def interpret(address: str):
     while True:
         async with async_session() as session:
             try:
-                (contract,) = (await session.execute(
+                contract, = (await session.execute(
                     select(Contract).where(Contract.address == address))).one()
             except NoResultFound:
                 logging.warning('Failed to find contract')
@@ -173,7 +171,7 @@ async def interpret(address: str):
 
             if contract.block_counter is None:
                 try:
-                    (tx,) = (await session.execute(
+                    tx, = (await session.execute(
                         select(Transaction).
                         where(Transaction.contract == contract).
                         where(Transaction.type == TYPE_DEPLOY).
@@ -186,7 +184,7 @@ async def interpret(address: str):
                     continue
 
             try:
-                (block,) = (await session.execute(
+                block, = (await session.execute(
                     select(Block).where(Block.id == contract.block_counter))).one()
                 interpreter = FluenceInterpreter(session)
                 for tx, in await session.execute(

@@ -13,6 +13,7 @@ setup(
         'asyncpg',
         'cairo-lang',
         'click',
+        'marshmallow',
         'py-eth-sig-utils',
         'python-decouple',
         'sqlalchemy',

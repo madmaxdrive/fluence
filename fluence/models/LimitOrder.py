@@ -1,9 +1,22 @@
+from enum import IntEnum
+
+from marshmallow import Schema, fields
 from sqlalchemy import Column, Integer, Numeric, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
 from .Base import Base
+from .Token import TokenSchema
+from .TokenContract import TokenContractSchema
 
-ASK = 0
-BID = 1
+
+class Side(IntEnum):
+    ASK = 0
+    BID = 1
+
+
+class State(IntEnum):
+    NEW = 0
+    FULFILLED = 1
+    CANCELLED = 2
 
 
 class LimitOrder(Base):
@@ -25,3 +38,23 @@ class LimitOrder(Base):
     quote_contract = relationship('TokenContract', foreign_keys=quote_contract_id)
     tx = relationship('Transaction', foreign_keys=tx_id)
     closed_tx = relationship('Transaction', foreign_keys=closed_tx_id)
+
+    @property
+    def state(self):
+        if self.fulfilled is None:
+            return State.NEW
+
+        if self.fulfilled is True:
+            return State.FULFILLED
+
+        return State.CANCELLED
+
+
+class LimitOrderSchema(Schema):
+    order_id = fields.String()
+    user = fields.Function(lambda lo: lo.user.ethereum_address)
+    bid = fields.Boolean()
+    token = fields.Nested(TokenSchema())
+    quote_contract = fields.Nested(TokenContractSchema())
+    quote_amount = fields.String()
+    state = fields.Integer()

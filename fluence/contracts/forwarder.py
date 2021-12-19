@@ -32,28 +32,36 @@ class Forwarder:
             self,
             name: str,
             version: str,
-            verifying_contract: ChecksumAddress,
+            contract_address: ChecksumAddress,
             to_address: ChecksumAddress,
             account: LocalAccount,
             w3: Web3):
-        self.account = account
-        self.to_address = to_address
-        self.contract = w3.eth.contract(
-            verifying_contract,
+        self._account = account
+        self._to_address = to_address
+        self._contract = w3.eth.contract(
+            contract_address,
             abi=pkg_resources.resource_string(__name__, 'abi/FluenceForwarder.abi').decode())
-        self.domain = {
+        self._domain = {
             'name': name,
             'version': version,
             'chainId': w3.eth.chain_id,
-            'verifyingContract': verifying_contract,
+            'verifyingContract': contract_address,
         }
+
+    @property
+    def address(self):
+        return self._contract.address
+
+    @property
+    def to_address(self):
+        return self._to_address
 
     def forward(self, calldata, gas: int):
         batch = uuid4().int
-        nonce = self.contract.functions['getNonce'](self.account.address, batch).call()
+        nonce = self._contract.functions['getNonce'](self._account.address, batch).call()
         req = {
-            'from': self.account.address,
-            'to': self.to_address,
+            'from': self._account.address,
+            'to': self._to_address,
             'value': 0,
             'gas': gas,
             'batch': batch,
@@ -62,10 +70,10 @@ class Forwarder:
         }
         data = {
             'types': types,
-            'domain': self.domain,
+            'domain': self._domain,
             'primaryType': 'ForwardRequest',
             'message': req,
         }
-        signature = v_r_s_to_signature(*sign_typed_data(data, self.account.key))
+        signature = v_r_s_to_signature(*sign_typed_data(data, self._account.key))
 
         return req, Web3.toHex(signature)

@@ -9,7 +9,7 @@ from starkware.starknet.services.api.gateway.gateway_client import GatewayClient
 from starkware.starknet.services.api.gateway.transaction import InvokeFunction
 from web3 import Web3
 
-from .utils import parse_int
+from fluence.utils import parse_int
 
 LimitOrder = namedtuple('LimitOrder', [
     'user',
@@ -66,7 +66,7 @@ class StarkFluence:
         return balance
 
     async def get_owner(self, token_id, contract):
-        owner, = await self._estimate('get_balance', [token_id, contract])
+        owner, = await self._estimate('get_owner', [token_id, contract])
 
         return owner
 
@@ -96,7 +96,7 @@ class StarkFluence:
         return map(parse_int, response['result'])
 
     async def _transact(self, name: str, calldata: list, signature):
-        response = await self._gateway.add_transaction(self._invoke(name, calldata, map(parse_int, signature)))
+        response = await self._gateway.add_transaction(self._invoke(name, calldata, list(map(parse_int, signature))))
 
         return response['transaction_hash']
 
@@ -104,5 +104,5 @@ class StarkFluence:
         return InvokeFunction(
             contract_address=self._address,
             entry_point_selector=get_selector_from_name(name),
-            calldata=map(parse_int, calldata),
+            calldata=list(map(parse_int, calldata)),
             signature=signature or [])
