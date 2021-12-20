@@ -13,6 +13,7 @@ setup(
         'asyncpg',
         'cairo-lang',
         'click',
+        'jsonschema',
         'marshmallow',
         'py-eth-sig-utils',
         'python-decouple',

@@ -19,7 +19,8 @@ class Token(Base):
     description = Column(String)
     image = Column(String)
     token_uri = Column(String)
-    _metadata = Column(JSON)
+    asset_metadata = Column(JSON)
+    nonce = Column(Integer, nullable=False)
 
     contract = relationship('TokenContract', back_populates='tokens')
     owner = relationship('Account', back_populates='tokens')

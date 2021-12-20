@@ -13,4 +13,3 @@ def to_address(address) -> ChecksumAddress:
 
 
 ZERO_ADDRESS = to_address(0)
-IERC721_METADATA = '0x5b5e139f'

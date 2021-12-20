@@ -2,26 +2,31 @@ import asyncio
 import logging
 from decimal import Decimal
 from typing import Optional
+from urllib.parse import urljoin
 
+import aiohttp
 import click
-import pkg_resources
+from jsonschema.exceptions import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from web3 import Web3
+from web3.exceptions import BadFunctionCallOutput
 
+from fluence.contracts import ERC20, ERC721Metadata
 from fluence.models import Account, TokenContract, Token, LimitOrder, Block, StarkContract
 from fluence.models.LimitOrder import Side
 from fluence.models.TokenContract import KIND_ERC721
 from fluence.models.Transaction import Transaction, TYPE_DEPLOY
 from fluence.services import async_session
-from fluence.utils import to_address, parse_int, ZERO_ADDRESS, IERC721_METADATA
+from fluence.utils import to_address, parse_int, ZERO_ADDRESS
 
 
 class FluenceInterpreter:
-    def __init__(self, session: AsyncSession, w3: Web3):
+    def __init__(self, session: AsyncSession, client: aiohttp.ClientSession, w3: Web3):
         self.session = session
+        self.client = client
         self.w3 = w3
 
     async def exec(self, tx: Transaction):
@@ -42,8 +47,12 @@ class FluenceInterpreter:
 
     async def register_contract(self, tx: Transaction):
         logging.warning(f'register_contract')
-        _from_address, contract, kind, _mint = tx.calldata
-        token_contract = TokenContract(address=to_address(contract), fungible=int(kind) != KIND_ERC721)
+        _from_address, contract, kind, mint = tx.calldata
+        minter = self.lift_account(mint)
+        token_contract = TokenContract(
+            address=to_address(contract),
+            fungible=int(kind) != KIND_ERC721,
+            minter=minter)
         self.session.add(self.lift_contract(token_contract))
 
     async def register_client(self, tx: Transaction):
@@ -155,8 +164,21 @@ class FluenceInterpreter:
                 where(Token.token_id == token_id).
                 where(Token.contract == token_contract))).one()
         except NoResultFound:
-            token = Token(contract=token_contract, token_id=token_id)
+            token = Token(contract=token_contract, token_id=token_id, nonce=0)
             self.session.add(token)
+
+        try:
+            token.token_uri = urljoin(token_contract.base_uri, str(token_id)) if token_contract.base_uri else \
+                ERC721Metadata(token_contract.address, self.w3).token_uri(token_id)
+            async with self.client.get(token.token_uri) as resp:
+                token.asset_metadata = await resp.json()
+
+                ERC721Metadata.validate(token.asset_metadata)
+                token.name = token.asset_metadata['name']
+                token.description = token.asset_metadata['description']
+                token.image = token.asset_metadata['image']
+        except (BadFunctionCallOutput, ValueError, ValidationError):
+            pass
 
         return token
 
@@ -166,24 +188,13 @@ class FluenceInterpreter:
 
             return token_contract
 
-        if token_contract.fungible:
-            contract = self.w3.eth.contract(
-                token_contract.address,
-                abi=pkg_resources.resource_string(__name__, 'contracts/abi/ERC20.abi').decode())
-            token_contract.name = contract.functions['name']().call()
-            token_contract.symbol = contract.functions['symbol']().call()
-            token_contract.decimals = contract.functions['decimals']().call()
-        else:
-            contract = self.w3.eth.contract(
-                token_contract.address,
-                abi=pkg_resources.resource_string(__name__, 'contracts/abi/IERC165.abi').decode())
-            if contract.functions['supportsInterface'](IERC721_METADATA).call():
-                contract = self.w3.eth.contract(
-                    token_contract.address,
-                    abi=pkg_resources.resource_string(__name__, 'contracts/abi/IERC721Metadata.abi').decode())
-                token_contract.name = contract.functions['name']().call()
-                token_contract.symbol = contract.functions['symbol']().call()
-                token_contract.decimals = 0
+        contract = ERC20(token_contract.address, self.w3) if token_contract.fungible else \
+            ERC721Metadata(token_contract.address, self.w3)
+        try:
+            token_contract.name, token_contract.symbol, token_contract.decimals \
+                = contract.identify()
+        except ValueError:
+            pass
 
         return token_contract
 
@@ -216,14 +227,15 @@ async def interpret(address: str):
             try:
                 block, = (await session.execute(
                     select(Block).where(Block.id == contract.block_counter))).one()
-                interpreter = FluenceInterpreter(session, Web3())
-                for tx, in await session.execute(
-                        select(Transaction).
-                        where(Transaction.block == block).
-                        where(Transaction.contract == contract).
-                        order_by(Transaction.transaction_index)):
-                    logging.warning(f'interpret(tx={tx.hash})')
-                    await interpreter.exec(tx)
+                async with aiohttp.ClientSession() as client:
+                    interpreter = FluenceInterpreter(session, client, Web3())
+                    for tx, in await session.execute(
+                            select(Transaction).
+                            where(Transaction.block == block).
+                            where(Transaction.contract == contract).
+                            order_by(Transaction.transaction_index)):
+                        logging.warning(f'interpret(tx={tx.hash})')
+                        await interpreter.exec(tx)
 
                 contract.block_counter += 1
                 await session.commit()

@@ -2,14 +2,19 @@ from aiohttp import web
 from aiohttp.web_request import Request
 from decouple import config
 from eth_account import Account
+from jsonschema.exceptions import ValidationError
 from services.external_api.base_client import RetryConfig
 from sqlalchemy import select, null
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import functions
+from starkware.crypto.signature.fast_pedersen_hash import pedersen_hash
+from starkware.crypto.signature.signature import verify
 from starkware.starknet.services.api.feeder_gateway.feeder_gateway_client import FeederGatewayClient
 from starkware.starknet.services.api.gateway.gateway_client import GatewayClient
 from web3 import Web3
 
+from fluence.contracts import ERC721Metadata
 from fluence.contracts.fluence import StarkFluence, LimitOrder, EtherFluence, ContractKind
 from fluence.contracts.forwarder import Forwarder
 from fluence.utils import parse_int
@@ -25,14 +30,66 @@ async def get_contracts(request: Request):
     })
 
 
+@routes.get('/collections')
+async def get_collections(request: Request):
+    page = parse_int(request.query.get('page', '1'))
+    size = parse_int(request.query.get('size', '100'))
+    owner = request.query.get('owner')
+
+    async with request.config_dict['async_session']() as session:
+        from fluence.models import TokenContract, Account
+
+        def augment(stmt):
+            stmt = stmt.where(TokenContract.fungible == True)
+            if owner:
+                stmt = stmt.join(TokenContract.minter). \
+                    where(Account.address == owner)
+
+            return stmt
+
+        query = augment(select(TokenContract)).limit(size).offset(size * (page - 1))
+        count = augment(select(functions.count()).select_from(LimitOrder))
+
+        return web.json_response({
+            'data': list(map(
+                TokenContract().dump,
+                (await session.execute(query)).scalars())),
+            'total': (await session.execute(count)).scalar_one(),
+        })
+
+
+@routes.post('/collections')
 @routes.post('/contracts')
-async def register_contract(request: Request):
+async def register_collection(request: Request):
+    # TODO: secure
     data = await request.json()
+    address = data['contract']
+    minter = parse_int(data['minter'])
     req, signature = request.config_dict['forwarder'].forward(
-        *request.config_dict['ether_fluence'].register_contract(
-            data['contract'],
-            ContractKind.ERC721,
-            parse_int(data['minter'])))
+        *request.config_dict['ether_fluence'].register_contract(address, ContractKind.ERC721, minter))
+
+    async with request.config_dict['async_session']() as session:
+        from fluence.models import TokenContract, Account
+
+        try:
+            account = await session.execute(
+                select(Account).
+                where(Account.stark_key == minter)).scalar_one()
+        except NoResultFound:
+            account = Account(stark_key=minter)
+            session.add(account)
+
+        token_contract = TokenContract(
+            address=address,
+            fungible=True,
+            minter=account,
+            name=data['name'],
+            symbol=data['symbol'],
+            decimals=0,
+            base_uri=data['base_uri'])
+        session.add(token_contract)
+
+        session.commit()
 
     return web.json_response({
         'req': {k: str(v) for k, v in req.items()},
@@ -91,6 +148,64 @@ async def mint(request: Request):
     return web.json_response({'transaction_hash': tx})
 
 
+@routes.get('/contracts/{address}/tokens/{token_id}/_metadata')
+async def get_metadata(request: Request):
+    async with request.config_dict['async_session']() as session:
+        from fluence.models import TokenContract, Token
+
+        token = (await session.execute(
+            select(Token).
+            join(Token.contract).
+            where(Token.token_id == parse_int(request.match_info['token_id'])).
+            where(TokenContract.address == request.match_info['address']))).scalar_one()
+
+        return web.json_response(token.asset_metadata)
+
+
+@routes.put('/contracts/{address}/tokens/{token_id}/_metadata')
+async def update_metadata(request: Request):
+    metadata = await request.json()
+    try:
+        ERC721Metadata.validate(metadata)
+    except ValidationError:
+        return web.HTTPBadRequest
+
+    async with request.config_dict['async_session']() as session:
+        from fluence.models import TokenContract, Token, TokenSchema
+
+        token_contract, = (await session.execute(
+            select(TokenContract).
+            where(TokenContract.address == request.match_info['address']).
+            options(selectinload(TokenContract.minter)))).one()
+        token_id = parse_int(request.match_info['token_id'])
+        try:
+            token, = (await session.execute(
+                select(Token).
+                where(Token.token_id == token_id).
+                where(Token.contract == token_contract).
+                options(selectinload(Token.contract)))).one()
+        except NoResultFound:
+            token = Token(contract=token_contract, token_id=token_id, nonce=0)
+            session.add(token)
+
+        message_hash = \
+            pedersen_hash(parse_int(token_contract.address),
+                          pedersen_hash(token_id,
+                                        pedersen_hash(token.nonce, 0)))
+        r, s = map(parse_int, request.query['signature'].split(','))
+        if not verify(message_hash, r, s, int(token_contract.minter.stark_key)):
+            return web.HTTPUnauthorized()
+
+        token.name = metadata['name']
+        token.description = metadata['description']
+        token.image = metadata['image']
+        token.asset_metadata = metadata
+
+        await session.commit()
+
+        return web.json_response(TokenSchema().dump(token))
+
+
 @routes.post('/withdraw')
 async def withdraw(request: Request):
     data = await request.json()
@@ -107,8 +222,6 @@ async def withdraw(request: Request):
 
 @routes.get('/orders')
 async def get_orders(request: Request):
-    from fluence.models import LimitOrder, LimitOrderSchema, State, Account, Token, TokenContract
-
     page = parse_int(request.query.get('page', '1'))
     size = parse_int(request.query.get('size', '100'))
     user = request.query.get('user')
@@ -117,6 +230,8 @@ async def get_orders(request: Request):
     state = request.query.get('state')
 
     async with request.config_dict['async_session']() as session:
+        from fluence.models import LimitOrder, LimitOrderSchema, State, Account, Token, TokenContract
+
         def augment(stmt):
             if user:
                 stmt = stmt.join(LimitOrder.user). \

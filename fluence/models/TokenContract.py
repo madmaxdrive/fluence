@@ -13,10 +13,13 @@ class TokenContract(Base):
     id = Column(Integer, primary_key=True)
     address = Column(String, unique=True, nullable=False)
     fungible = Column(Boolean, nullable=False)
+    minter_id = Column(Integer, ForeignKey('account.id'))
     name = Column(String)
     symbol = Column(String)
     decimals = Column(Integer)
+    base_uri = Column(String)
 
+    minter = relationship('Account')
     tokens = relationship('Token', back_populates='contract')
 
 
