@@ -90,7 +90,8 @@ async def get_collections(request: Request):
         def augment(stmt):
             stmt = stmt.where(TokenContract.fungible == true())
             if owner:
-                stmt = stmt.join(TokenContract.minter). \
+                stmt = stmt.join(TokenContract.blueprint). \
+                    join(Blueprint.minter). \
                     where(Account.address == owner)
 
             return stmt
@@ -137,7 +138,7 @@ async def register_collection(request: Request):
             session.add(blueprint)
 
         if not authenticate(
-                [data['address'], data['name'], data['symbol'], data['base_uri']],
+                [data['address'], data['name'], data['symbol'], data['base_uri'], data['image']],
                 request.query['signature'],
                 int(blueprint.minter.stark_key)):
             return web.HTTPUnauthorized()
@@ -181,6 +182,41 @@ async def register_client(request: Request):
         request.query['signature'].split(','))
 
     return web.json_response({'transaction_hash': tx})
+
+
+@routes.get('/tokens')
+async def get_tokens(request: Request):
+    page = parse_int(request.query.get('page', '1'))
+    size = parse_int(request.query.get('size', '100'))
+    owner = request.query.get('owner')
+    collection = request.query.get('collection')
+
+    async with request.config_dict['async_session']() as session:
+        from fluence.models import Token, TokenSchema, TokenContract, Account, Blueprint
+
+        def augment(stmt):
+            if owner:
+                stmt = stmt.join(Token.owner). \
+                    where(Account.address == owner)
+            if collection:
+                stmt = stmt.join(Token.contract). \
+                    where(TokenContract.address == collection)
+
+            return stmt
+
+        query = augment(select(Token)).limit(size).offset(size * (page - 1))
+        count = augment(select(functions.count()).select_from(Token))
+
+        return web.json_response({
+            'data': list(map(
+                TokenSchema().dump,
+                (await session.execute(
+                    query.options(
+                        selectinload(Token.contract).
+                        selectinload(TokenContract.blueprint).
+                        selectinload(Blueprint.minter)))).scalars())),
+            'total': (await session.execute(count)).scalar_one(),
+        })
 
 
 @routes.get('/balance')
@@ -377,6 +413,30 @@ async def get_tx_status(request: Request):
     return web.json_response(status)
 
 
+async def upload(request: Request):
+    import hashlib
+    import mimetypes
+    import aiohttp.hdrs
+
+    reader = await request.multipart()
+    part = await reader.next()
+    if part.name != 'asset':
+        return web.HTTPBadRequest()
+
+    extension = mimetypes.guess_extension(part.headers[aiohttp.hdrs.CONTENT_TYPE])
+    if not extension:
+        return web.HTTPBadRequest()
+
+    data = await part.read()
+    asset = f'{hashlib.sha1(data).hexdigest()}{extension}'
+    file = request.config_dict['bucket_root'] / asset[:2] / asset[2:4] / asset
+    file.parent.mkdir(parents=True, exist_ok=True)
+    with file.open('wb') as f:
+        f.write(data)
+
+    return web.json_response({'asset': asset})
+
+
 def authenticate(message: list[Union[int, str, bytes]], signature: str, stark_key: int) -> bool:
     import hashlib
 
@@ -392,6 +452,7 @@ def authenticate(message: list[Union[int, str, bytes]], signature: str, stark_ke
 
 
 def serve():
+    from pathlib import Path
     from .services import async_session
 
     app = web.Application()
@@ -419,5 +480,9 @@ def serve():
     v1 = web.Application()
     v1.add_routes(routes)
     app.add_subapp('/api/v1', v1)
+
+    app['bucket_root'] = Path(config('BUCKET_ROOT'))
+    app.add_routes([web.post('/fs', upload),
+                    web.static('/fs', app['bucket_root'])])
 
     web.run_app(app, port=4000)

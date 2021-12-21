@@ -19,6 +19,7 @@ class TokenContract(Base):
     symbol = Column(String)
     decimals = Column(Integer)
     base_uri = Column(String)
+    image = Column(String)
 
     blueprint = relationship('Blueprint', back_populates='contract', uselist=False)
     tokens = relationship('Token', back_populates='contract')
@@ -31,3 +32,4 @@ class TokenContractSchema(Schema):
     name = fields.String()
     symbol = fields.String()
     decimals = fields.Integer()
+    image = fields.String()
