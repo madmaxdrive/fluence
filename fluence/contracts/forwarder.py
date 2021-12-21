@@ -3,6 +3,7 @@ from uuid import uuid4
 import pkg_resources
 from eth_account.signers.local import LocalAccount
 from eth_typing import ChecksumAddress
+from marshmallow import Schema, fields
 from py_eth_sig_utils.signing import v_r_s_to_signature, sign_typed_data
 from web3 import Web3
 
@@ -77,3 +78,14 @@ class Forwarder:
         signature = v_r_s_to_signature(*sign_typed_data(data, self._account.key))
 
         return req, Web3.toHex(signature)
+
+
+ReqSchema = Schema.from_dict({
+    'from': fields.String(),
+    'to': fields.String(),
+    'value': fields.String(),
+    'gas': fields.String(),
+    'batch': fields.String(),
+    'nonce': fields.String(),
+    'data': fields.String(),
+})

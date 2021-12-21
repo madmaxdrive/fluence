@@ -1,5 +1,7 @@
+from marshmallow import Schema, fields
 from sqlalchemy import Column, Integer, Numeric, String
 from sqlalchemy.orm import relationship
+
 from .Base import Base
 
 
@@ -11,3 +13,8 @@ class Account(Base):
     address = Column(String)
 
     tokens = relationship('Token', back_populates='owner')
+
+
+class AccountSchema(Schema):
+    stark_key = fields.String()
+    address = fields.String()

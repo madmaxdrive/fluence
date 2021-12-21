@@ -3,6 +3,8 @@ from enum import IntEnum
 from marshmallow import Schema, fields
 from sqlalchemy import Column, Integer, Numeric, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
+
+from .Account import AccountSchema
 from .Base import Base
 from .Token import TokenSchema
 from .TokenContract import TokenContractSchema
@@ -52,7 +54,7 @@ class LimitOrder(Base):
 
 class LimitOrderSchema(Schema):
     order_id = fields.String()
-    user = fields.Function(lambda lo: lo.user.address)
+    user = fields.Nested(AccountSchema())
     bid = fields.Boolean()
     token = fields.Nested(TokenSchema())
     quote_contract = fields.Nested(TokenContractSchema())
