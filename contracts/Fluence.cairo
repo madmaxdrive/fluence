@@ -21,8 +21,8 @@ const STATE_FULFILLED = 1
 const STATE_CANCELLED = 2
 
 struct ContractDescription:
-    member kind : felt		# ERC20 / ERC721
-    member mint : felt		# minter
+    member kind : felt          # ERC20 / ERC721
+    member mint : felt          # minter
 end
 
 struct LimitOrder:
@@ -76,6 +76,10 @@ func constructor{
     adm : felt):
     l1_contract_address.write(value=l1_caddr)
     admin.write(value=adm)
+
+    description.write(0, ContractDescription(
+        kind=KIND_ERC20,
+        mint=0))
 
     return ()
 end
@@ -163,7 +167,7 @@ func register_contract{
 
     description.write(contract, ContractDescription(
         kind=kind,
-    	mint=mint))
+        mint=mint))
 
     return ()
 end
@@ -200,6 +204,8 @@ func mint{
     token_id : felt,
     contract : felt,
     nonce : felt):
+    assert_nn(token_id)
+
     let (desc) = description.read(contract=contract)
     assert desc.kind = KIND_ERC721
 
@@ -231,6 +237,7 @@ func withdraw{
     address : felt,
     nonce : felt):
     alloc_locals
+    assert_nn(amountOrId)
 
     let inputs : felt* = alloc()
     inputs[0] = amountOrId
@@ -267,9 +274,10 @@ func withdraw{
     assert payload[2] = amountOrId
     assert payload[3] = contract
     assert payload[4] = org
+    assert payload[5] = nonce
     send_message_to_l1(
         to_address=l1_caddr,
-        payload_size=5,
+        payload_size=6,
         payload=payload)
 
     return ()
@@ -283,7 +291,8 @@ func deposit{
     from_address : felt,
     user : felt,
     amountOrId : felt,
-    contract : felt):
+    contract : felt,
+    nonce : felt):
     let (l1_caddr) = l1_contract_address.read()
     assert l1_caddr = from_address
 
@@ -305,6 +314,48 @@ func deposit{
 end
 
 @external
+func transfer{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    contract : felt,
+    amount_or_token_id : felt,
+    from_ : felt,
+    to_ : felt):
+    alloc_locals
+    assert_nn(amount_or_token_id)
+
+    let (desc) = description.read(contract=contract)
+    assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
+
+    let inputs : felt* = alloc()
+    inputs[0] = contract
+    inputs[1] = amount_or_token_id
+    inputs[2] = to_
+    verify_inputs_by_signature(from_, 3, inputs)
+
+    if desc.kind == KIND_ERC20:
+        let (bal) = balance.read(user=from_, contract=contract)
+        let new_balance = bal - amount_or_token_id
+        assert_nn(new_balance)
+        balance.write(from_, contract, new_balance)
+
+        let (bal) = balance.read(user=to_, contract=contract)
+        let new_balance = bal + amount_or_token_id
+        assert_nn(new_balance)
+        balance.write(to_, contract, new_balance)
+    else:
+        let (usr) = owner.read(token_id=amount_or_token_id, contract=contract)
+        assert usr = from_
+
+        owner.write(amount_or_token_id, contract, to_)
+    end
+
+    return ()
+end
+
+@external
 func create_order{
     syscall_ptr : felt*,
     ecdsa_ptr : SignatureBuiltin*,
@@ -318,6 +369,9 @@ func create_order{
     quote_contract : felt,
     quote_amount : felt):
     alloc_locals
+
+    assert (bid - ASK) * (bid - BID) = 0
+    assert_nn(quote_amount)
 
     let (ord) = order.read(id=id)
     assert ord.user = 0

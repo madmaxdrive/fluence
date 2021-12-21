@@ -19,6 +19,7 @@ contract Fluence is IERC721Receiver, ERC2771Context {
 
     IStarknetCore starknetCore;
     address admin;
+    uint nonce;
 
     mapping(address => TokenType) public contracts;
 
@@ -42,10 +43,11 @@ contract Fluence is IERC721Receiver, ERC2771Context {
     }
 
     function deposit(uint256 toContract, uint256 user) external payable {
-        uint256[] memory payload = new uint256[](3);
+        uint256[] memory payload = new uint256[](4);
         payload[0] = user;
         payload[1] = msg.value;
         payload[2] = 0;
+        payload[3] = nonce++;
         starknetCore.sendMessageToL2(toContract, DEPOSIT, payload);
     }
 
@@ -63,23 +65,25 @@ contract Fluence is IERC721Receiver, ERC2771Context {
             erc721.safeTransferFrom(_msgSender(), address(this), amountOrId);
         }
 
-        uint256[] memory payload = new uint256[](3);
+        uint256[] memory payload = new uint256[](4);
         payload[0] = user;
         payload[1] = amountOrId;
         payload[2] = uint160(fromContract);
+        payload[3] = nonce++;
         starknetCore.sendMessageToL2(toContract, DEPOSIT, payload);
     }
 
-    function withdraw(uint256 fromContract, address payable user, uint256 amountOrId, address toContract, bool mint) external {
+    function withdraw(uint256 fromContract, address payable user, uint256 amountOrId, address toContract, bool mint, uint256 nonce_) external {
         TokenType typ_ = contracts[toContract];
         require(toContract == address(0) || typ_ != TokenType.Z, "Unregistered contract.");
 
-        uint256[] memory payload = new uint256[](5);
+        uint256[] memory payload = new uint256[](6);
         payload[0] = WITHDRAW;
         payload[1] = uint160(_msgSender());
         payload[2] = amountOrId;
         payload[3] = uint160(toContract);
         payload[4] = mint ? 1 : 0;
+        payload[5] = nonce_;
         starknetCore.consumeMessageFromL2(fromContract, payload);
 
         if (toContract == address(0)) {
@@ -87,7 +91,7 @@ contract Fluence is IERC721Receiver, ERC2771Context {
         } else if (typ_ == TokenType.ERC20) {
             IERC20(toContract).transfer(user, amountOrId);
         } else if (mint) {
-	    IMintable(toContract).mintFor(user, 1, abi.encodePacked("{", Strings.toString(amountOrId), "}:{}"));
+            IMintable(toContract).mintFor(user, 1, abi.encodePacked("{", Strings.toString(amountOrId), "}:{}"));
         } else {
             IERC721(toContract).safeTransferFrom(address(this), user, amountOrId);
         }

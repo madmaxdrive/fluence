@@ -1,4 +1,5 @@
 import functools
+from decimal import Decimal
 from typing import Union
 
 from aiohttp import web
@@ -8,7 +9,7 @@ from eth_account import Account
 from jsonschema.exceptions import ValidationError
 from services.external_api.base_client import RetryConfig
 from sqlalchemy import select, null, true
-from sqlalchemy.exc import NoResultFound
+from sqlalchemy.exc import NoResultFound, IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import functions
 from starkware.crypto.signature.fast_pedersen_hash import pedersen_hash
@@ -36,29 +37,30 @@ async def get_contracts(request: Request):
 @routes.post('/blueprints')
 async def create_blueprint(request: Request):
     data = await request.json()
-    if not authenticate(
-            [data['permanent_id'].encode()],
-            request.query['signature'],
-            data['minter']):
+    minter = parse_int(data['minter'])
+    if not authenticate([data['permanent_id'].encode()], request.query['signature'], minter):
         return web.HTTPUnauthorized()
 
     async with request.config_dict['async_session']() as session:
         from fluence.models import Account, Blueprint, BlueprintSchema
 
         try:
-            minter = (await session.execute(
+            account = (await session.execute(
                 select(Account).
-                where(Account.stark_key == data['minter']))).scalar_one()
+                where(Account.stark_key == Decimal(minter)))).scalar_one()
         except NoResultFound:
-            minter = Account(stark_key=data['minter'])
-            session.add(minter)
+            account = Account(stark_key=minter)
+            session.add(account)
 
-        blueprint = Blueprint(
-            permanent_id=data['permanent_id'],
-            minter=minter,
-            expire_at=None)
-        session.add(blueprint)
-        await session.commit()
+        try:
+            blueprint = Blueprint(
+                permanent_id=data['permanent_id'],
+                minter=account,
+                expire_at=None)
+            session.add(blueprint)
+            await session.commit()
+        except IntegrityError:
+            return web.HTTPBadRequest()
 
         return web.json_response(BlueprintSchema().dump(blueprint))
 

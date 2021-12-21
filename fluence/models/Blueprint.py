@@ -15,7 +15,7 @@ class Blueprint(Base):
     expire_at = Column(DateTime(timezone=True))
 
     minter = relationship('Account')
-    contract = relationship('Contract', back_populates='blueprint')
+    contract = relationship('TokenContract', back_populates='blueprint')
 
 
 class BlueprintSchema(Schema):
