@@ -76,6 +76,9 @@ class StarkFluence:
     def withdraw(self, user, amount_or_token_id, contract, address, nonce, signature):
         return self._transact('withdraw', [user, amount_or_token_id, contract, address, nonce], signature)
 
+    def transfer(self, from_, to_, amount_or_token_id, contract, nonce, signature):
+        return self._transact('transfer', [from_, to_, amount_or_token_id, contract, nonce], signature)
+
     async def get_order(self, order_id):
         result = await self._estimate('get_order', [order_id])
 

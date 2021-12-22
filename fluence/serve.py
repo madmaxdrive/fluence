@@ -87,7 +87,7 @@ async def get_collections(request: Request):
     owner = request.query.get('owner')
 
     async with request.config_dict['async_session']() as session:
-        from fluence.models import TokenContract, Account, Blueprint
+        from fluence.models import TokenContract, TokenContractSchema, Account, Blueprint
 
         def augment(stmt):
             stmt = stmt.where(TokenContract.fungible == true())
@@ -99,14 +99,14 @@ async def get_collections(request: Request):
             return stmt
 
         query = augment(select(TokenContract)).limit(size).offset(size * (page - 1))
-        count = augment(select(functions.count()).select_from(LimitOrder))
+        count = augment(select(functions.count()).select_from(TokenContract))
 
         return web.json_response({
             'data': list(map(
-                TokenContract().dump,
+                TokenContractSchema().dump,
                 (await session.execute(
                     query.options(
-                        selectinload(TokenContract.blueprint).selectinload(Blueprint.account)))).scalars())),
+                        selectinload(TokenContract.blueprint).selectinload(Blueprint.minter)))).scalars())),
             'total': (await session.execute(count)).scalar_one(),
         })
 
@@ -140,7 +140,11 @@ async def register_collection(request: Request):
             session.add(blueprint)
 
         if not authenticate(
-                [data['address'], data['name'], data['symbol'], data['base_uri'], data['image']],
+                [data['address'],
+                 data['name'].encode(),
+                 data['symbol'].encode(),
+                 data['base_uri'].encode(),
+                 data['image'].encode()],
                 request.query['signature'],
                 int(blueprint.minter.stark_key)):
             return web.HTTPUnauthorized()
@@ -275,12 +279,14 @@ async def update_metadata(request: Request):
         return web.HTTPBadRequest
 
     async with request.config_dict['async_session']() as session:
-        from fluence.models import TokenContract, Token, TokenSchema
+        from fluence.models import TokenContract, Blueprint, Token, TokenSchema
 
         token_contract, = (await session.execute(
             select(TokenContract).
             where(TokenContract.address == request.match_info['address']).
-            options(selectinload(TokenContract.minter)))).one()
+            options(
+                selectinload(TokenContract.blueprint).
+                selectinload(Blueprint.minter)))).one()
         token_id = parse_int(request.match_info['token_id'])
         try:
             token, = (await session.execute(
@@ -292,12 +298,10 @@ async def update_metadata(request: Request):
             token = Token(contract=token_contract, token_id=token_id, nonce=0)
             session.add(token)
 
-        message_hash = \
-            pedersen_hash(parse_int(token_contract.address),
-                          pedersen_hash(token_id,
-                                        pedersen_hash(token.nonce, 0)))
-        r, s = map(parse_int, request.query['signature'].split(','))
-        if not verify(message_hash, r, s, int(token_contract.minter.stark_key)):
+        if not authenticate(
+                [token_contract.address, token_id, token.nonce],
+                request.query['signature'],
+                int(token_contract.blueprint.minter.stark_key)):
             return web.HTTPUnauthorized()
 
         token.name = metadata['name']
@@ -318,6 +322,20 @@ async def withdraw(request: Request):
         data['amount_or_token_id'],
         data['contract'],
         data['address'],
+        data['nonce'],
+        request.query['signature'].split(','))
+
+    return web.json_response({'transaction_hash': tx})
+
+
+@routes.post('/transfer')
+async def transfer(request: Request):
+    data = await request.json()
+    tx = await request.config_dict['fluence'].transfer(
+        data['from'],
+        data['to'],
+        data['amount_or_token_id'],
+        data['contract'],
         data['nonce'],
         request.query['signature'].split(','))
 

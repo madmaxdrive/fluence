@@ -232,15 +232,15 @@ func withdraw{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
     user : felt,
-    amountOrId : felt,
+    amount_or_token_id : felt,
     contract : felt,
     address : felt,
     nonce : felt):
     alloc_locals
-    assert_nn(amountOrId)
+    assert_nn(amount_or_token_id)
 
     let inputs : felt* = alloc()
-    inputs[0] = amountOrId
+    inputs[0] = amount_or_token_id
     inputs[1] = contract
     inputs[2] = address
     inputs[3] = nonce
@@ -250,28 +250,28 @@ func withdraw{
     let (desc) = description.read(contract=contract)
     assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
 
-    let (local org) = origin.read(amountOrId, contract)
+    let (local org) = origin.read(amount_or_token_id, contract)
     if desc.kind == KIND_ERC20:
-        assert_nn(amountOrId)
+        assert_nn(amount_or_token_id)
 
         let (bal) = balance.read(user=user, contract=contract)
-        let new_balance = bal - amountOrId
+        let new_balance = bal - amount_or_token_id
         assert_nn(new_balance)
 
         balance.write(user, contract, new_balance)
     else:
-        let (usr) = owner.read(token_id=amountOrId, contract=contract)
+        let (usr) = owner.read(token_id=amount_or_token_id, contract=contract)
         assert usr = user
 
-        owner.write(amountOrId, contract, 0)
-        origin.write(amountOrId, contract, 0)
+        owner.write(amount_or_token_id, contract, 0)
+        origin.write(amount_or_token_id, contract, 0)
     end
 
     let (l1_caddr) = l1_contract_address.read()
     let (payload : felt*) = alloc()
     assert payload[0] = WITHDRAW
     assert payload[1] = address
-    assert payload[2] = amountOrId
+    assert payload[2] = amount_or_token_id
     assert payload[3] = contract
     assert payload[4] = org
     assert payload[5] = nonce
@@ -290,7 +290,7 @@ func deposit{
     range_check_ptr}(
     from_address : felt,
     user : felt,
-    amountOrId : felt,
+    amount_or_token_id : felt,
     contract : felt,
     nonce : felt):
     let (l1_caddr) = l1_contract_address.read()
@@ -302,12 +302,12 @@ func deposit{
     if desc.kind == KIND_ERC20:
         let (bal) = balance.read(user=user, contract=contract)
 
-        balance.write(user, contract, bal + amountOrId)
+        balance.write(user, contract, bal + amount_or_token_id)
     else:
-        let (usr) = owner.read(token_id=amountOrId, contract=contract)
+        let (usr) = owner.read(token_id=amount_or_token_id, contract=contract)
         assert usr = 0
 
-        owner.write(amountOrId, contract, user)
+        owner.write(amount_or_token_id, contract, user)
     end
 
     return ()
@@ -319,10 +319,11 @@ func transfer{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    contract : felt,
-    amount_or_token_id : felt,
     from_ : felt,
-    to_ : felt):
+    to_ : felt,
+    amount_or_token_id : felt,
+    contract : felt,
+    nonce : felt):
     alloc_locals
     assert_nn(amount_or_token_id)
 
@@ -330,10 +331,11 @@ func transfer{
     assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
 
     let inputs : felt* = alloc()
-    inputs[0] = contract
+    inputs[0] = to_
     inputs[1] = amount_or_token_id
-    inputs[2] = to_
-    verify_inputs_by_signature(from_, 3, inputs)
+    inputs[2] = contract
+    inputs[3] = nonce
+    verify_inputs_by_signature(from_, 4, inputs)
 
     if desc.kind == KIND_ERC20:
         let (bal) = balance.read(user=from_, contract=contract)
