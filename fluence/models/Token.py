@@ -13,7 +13,7 @@ class Token(Base):
     contract_id = Column(Integer, ForeignKey('token_contract.id'), nullable=False)
     token_id = Column(Numeric(precision=80), nullable=False)
     owner_id = Column(Integer, ForeignKey('account.id'))
-    latest_tx_id = Column(Integer, ForeignKey('transaction.id'), nullable=False)
+    latest_tx_id = Column(Integer, ForeignKey('transaction.id'))
     ask_id = Column(Integer, ForeignKey('limit_order.id'))
     name = Column(String)
     description = Column(String)

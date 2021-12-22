@@ -273,7 +273,7 @@ async def get_metadata(request: Request):
             select(Token).
             join(Token.contract).
             where(Token.token_id == parse_int(request.match_info['token_id'])).
-            where(TokenContract.address == request.match_info['address']))).scalar_one()
+            where(TokenContract.address == Web3.toChecksumAddress(request.match_info['address'])))).scalar_one()
 
         return web.json_response(token.asset_metadata)
 
@@ -291,7 +291,7 @@ async def update_metadata(request: Request):
 
         token_contract, = (await session.execute(
             select(TokenContract).
-            where(TokenContract.address == request.match_info['address']).
+            where(TokenContract.address == Web3.toChecksumAddress(request.match_info['address'])).
             options(
                 selectinload(TokenContract.blueprint).
                 selectinload(Blueprint.minter)))).one()
@@ -316,6 +316,7 @@ async def update_metadata(request: Request):
         token.description = metadata['description']
         token.image = metadata['image']
         token.asset_metadata = metadata
+        token.nonce += 1
 
         await session.commit()
 
