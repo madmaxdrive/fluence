@@ -2,13 +2,14 @@ import functools
 from decimal import Decimal
 from typing import Union
 
+import pendulum
 from aiohttp import web
 from aiohttp.web_request import Request
 from decouple import config
 from eth_account import Account
 from jsonschema.exceptions import ValidationError
 from services.external_api.base_client import RetryConfig
-from sqlalchemy import select, null, true
+from sqlalchemy import select, null, true, desc
 from sqlalchemy.exc import NoResultFound, IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import functions
@@ -56,7 +57,7 @@ async def create_blueprint(request: Request):
             blueprint = Blueprint(
                 permanent_id=data['permanent_id'],
                 minter=account,
-                expire_at=None)
+                expire_at=pendulum.now().add(days=7))
             session.add(blueprint)
             await session.commit()
         except IntegrityError:
@@ -98,7 +99,10 @@ async def get_collections(request: Request):
 
             return stmt
 
-        query = augment(select(TokenContract)).limit(size).offset(size * (page - 1))
+        query = augment(select(TokenContract)). \
+            order_by(desc(TokenContract.id)). \
+            limit(size). \
+            offset(size * (page - 1))
         count = augment(select(functions.count()).select_from(TokenContract))
 
         return web.json_response({
@@ -149,10 +153,6 @@ async def register_collection(request: Request):
                 int(blueprint.minter.stark_key)):
             return web.HTTPUnauthorized()
 
-        req, signature = request.config_dict['forwarder'].forward(
-            *request.config_dict['ether_fluence'].register_contract(
-                data['address'], ContractKind.ERC721, int(blueprint.minter.stark_key)))
-
         token_contract = TokenContract(
             address=data['address'],
             fungible=True,
@@ -160,8 +160,13 @@ async def register_collection(request: Request):
             name=data['name'],
             symbol=data['symbol'],
             decimals=0,
-            base_uri=data['base_uri'])
+            base_uri=data['base_uri'],
+            image=data['image'])
         session.add(token_contract)
+
+        req, signature = request.config_dict['forwarder'].forward(
+            *request.config_dict['ether_fluence'].register_contract(
+                token_contract.address, ContractKind.ERC721, int(blueprint.minter.stark_key)))
         await session.commit()
 
         return web.json_response({
@@ -210,7 +215,10 @@ async def get_tokens(request: Request):
 
             return stmt
 
-        query = augment(select(Token)).limit(size).offset(size * (page - 1))
+        query = augment(select(Token)). \
+            order_by(desc(Token.id)). \
+            limit(size). \
+            offset(size * (page - 1))
         count = augment(select(functions.count()).select_from(Token))
 
         return web.json_response({
@@ -369,7 +377,10 @@ async def get_orders(request: Request):
 
             return stmt
 
-        query = augment(select(LimitOrder)).limit(size).offset(size * (page - 1))
+        query = augment(select(LimitOrder)). \
+            order_by(desc(LimitOrder.id)). \
+            limit(size). \
+            offset(size * (page - 1))
         count = augment(select(functions.count()).select_from(LimitOrder))
 
         return web.json_response({

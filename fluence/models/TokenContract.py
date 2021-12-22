@@ -1,6 +1,9 @@
 from marshmallow import Schema, fields
 from sqlalchemy import Column, Integer, Boolean, String, ForeignKey
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
+from web3 import Web3
+
 from .Base import Base
 from .Blueprint import BlueprintSchema
 
@@ -12,7 +15,7 @@ class TokenContract(Base):
     __tablename__ = 'token_contract'
 
     id = Column(Integer, primary_key=True)
-    address = Column(String, unique=True, nullable=False)
+    _address = Column('address', String, unique=True, nullable=False)
     fungible = Column(Boolean, nullable=False)
     blueprint_id = Column(Integer, ForeignKey('blueprint.id'), unique=True)
     name = Column(String)
@@ -23,6 +26,14 @@ class TokenContract(Base):
 
     blueprint = relationship('Blueprint', back_populates='contract', uselist=False)
     tokens = relationship('Token', back_populates='contract')
+
+    @hybrid_property
+    def address(self):
+        return self._address
+
+    @address.setter
+    def address(self, address):
+        self._address = Web3.toChecksumAddress(address)
 
 
 class TokenContractSchema(Schema):

@@ -15,6 +15,7 @@ setup(
         'click',
         'jsonschema',
         'marshmallow',
+        'pendulum',
         'py-eth-sig-utils',
         'python-decouple',
         'sqlalchemy',
