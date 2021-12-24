@@ -5,6 +5,7 @@ setup(
     version='0.0.1',
     packages=['fluence'],
     package_data={
+        'fluence': ['openapi.yaml'],
         'fluence.contracts': ['abi/*'],
     },
     install_requires=[
@@ -19,6 +20,8 @@ setup(
         'pendulum',
         'py-eth-sig-utils',
         'python-decouple',
+        'PyYAML',
+        'rororo',
         'sqlalchemy',
     ],
     entry_points={

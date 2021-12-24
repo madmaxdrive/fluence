@@ -4,11 +4,14 @@ from typing import Union
 
 import aiohttp_cors
 import pendulum
+import pkg_resources
 from aiohttp import web
 from aiohttp.web_request import Request
 from decouple import config
 from eth_account import Account
 from jsonschema.exceptions import ValidationError
+from openapi_core import create_spec
+from rororo import OperationTableDef, setup_openapi, openapi_context
 from services.external_api.base_client import RetryConfig
 from sqlalchemy import select, null, desc, false
 from sqlalchemy.exc import NoResultFound, IntegrityError
@@ -25,10 +28,11 @@ from fluence.contracts.fluence import StarkFluence, LimitOrder, EtherFluence, Co
 from fluence.contracts.forwarder import Forwarder, ReqSchema
 from fluence.utils import parse_int
 
+operations = OperationTableDef()
 routes = web.RouteTableDef()
 
 
-@routes.get('/contracts')
+@operations.register
 async def get_contracts(request: Request):
     return web.json_response({
         'fluence': request.config_dict['forwarder'].to_address,
@@ -36,35 +40,157 @@ async def get_contracts(request: Request):
     })
 
 
-@routes.post('/blueprints')
+@operations.register
+async def get_client(request: Request):
+    with openapi_context(request) as context:
+        stark_key = await request.config_dict['fluence']. \
+            get_client(context.parameters.path['address'])
+        if stark_key == 0:
+            return web.HTTPNotFound()
+
+        return web.json_response({'stark_key': str(stark_key)})
+
+
+@operations.register
+async def register_client(request: Request):
+    with openapi_context(request) as context:
+        tx = await request.config_dict['fluence']. \
+            register_client(context.data['stark_key'],
+                            context.parameters.path['address'],
+                            context.parameters.query['nonce'],
+                            context.parameters.query['signature'])
+
+        return web.json_response({'transaction_hash': tx})
+
+
+@operations.register
 async def create_blueprint(request: Request):
-    data = await request.json()
-    minter = parse_int(data['minter'])
-    if not authenticate([data['permanent_id'].encode()], request.query['signature'], minter):
-        return web.HTTPUnauthorized()
+    with openapi_context(request) as context:
+        minter = Decimal(context.data['minter'])
+        if not authenticate(
+                [context.data['permanent_id'].encode()],
+                context.parameters.query['signature'],
+                int(minter)):
+            return web.HTTPUnauthorized()
 
-    async with request.config_dict['async_session']() as session:
-        from fluence.models import Account, Blueprint, BlueprintSchema
+        async with request.config_dict['async_session']() as session:
+            from fluence.models import Account, Blueprint, BlueprintSchema
 
-        try:
-            account = (await session.execute(
-                select(Account).
-                where(Account.stark_key == Decimal(minter)))).scalar_one()
-        except NoResultFound:
-            account = Account(stark_key=minter)
-            session.add(account)
+            try:
+                account = (await session.execute(
+                    select(Account).
+                    where(Account.stark_key == minter))).scalar_one()
+            except NoResultFound:
+                account = Account(stark_key=minter)
+                session.add(account)
 
-        try:
-            blueprint = Blueprint(
-                permanent_id=data['permanent_id'],
-                minter=account,
-                expire_at=pendulum.now().add(days=7))
-            session.add(blueprint)
+            try:
+                blueprint = Blueprint(
+                    permanent_id=context.data['permanent_id'],
+                    minter=account,
+                    expire_at=pendulum.now().add(days=7))
+                session.add(blueprint)
+                await session.commit()
+            except IntegrityError:
+                return web.HTTPBadRequest()
+
+            return web.json_response(BlueprintSchema().dump(blueprint))
+
+
+@operations.register
+async def find_collections(request: Request):
+    with openapi_context(request) as context:
+        page = context.parameters.query.get('page', 1)
+        size = context.parameters.query.get('size', 100)
+        owner = context.parameters.query.get('owner')
+
+        async with request.config_dict['async_session']() as session:
+            from fluence.models import TokenContract, TokenContractSchema, Account, Blueprint
+
+            def augment(stmt):
+                stmt = stmt.where(TokenContract.fungible == false())
+                if owner:
+                    stmt = stmt.join(TokenContract.blueprint). \
+                        join(Blueprint.minter). \
+                        where(Account.address == owner)
+
+                return stmt
+
+            query = augment(select(TokenContract)). \
+                order_by(desc(TokenContract.id)). \
+                limit(size). \
+                offset(size * (page - 1))
+            count = augment(select(functions.count()).select_from(TokenContract))
+
+            return web.json_response({
+                'data': list(map(
+                    TokenContractSchema().dump,
+                    (await session.execute(
+                        query.options(
+                            selectinload(TokenContract.blueprint).
+                            selectinload(Blueprint.minter)))).scalars())),
+                'total': (await session.execute(count)).scalar_one(),
+            })
+
+
+@operations.register
+async def register_collection(request: Request):
+    with openapi_context(request) as context:
+        async with request.config_dict['async_session']() as session:
+            from fluence.models import TokenContract, Account, Blueprint
+
+            if 'blueprint' in context.data:
+                blueprint = (await session.execute(
+                    select(Blueprint).
+                    where(Blueprint.permanent_id == context.data['blueprint']).
+                    options(
+                        selectinload(Blueprint.minter),
+                        selectinload(Blueprint.contract)))).scalar_one()
+                if blueprint.contract:
+                    return web.HTTPBadRequest()
+            else:
+                minter = parse_int(context.data['minter'])
+                try:
+                    account = (await session.execute(
+                        select(Account).
+                        where(Account.address == minter))).scalar_one()
+                except NoResultFound:
+                    account = Account(stark_key=minter)
+                    session.add(account)
+
+                blueprint = Blueprint(account)
+                session.add(blueprint)
+
+            if not authenticate(
+                    [context.data['address'],
+                     context.data['name'].encode(),
+                     context.data['symbol'].encode(),
+                     context.data['base_uri'].encode(),
+                     context.data['image'].encode()],
+                    context.parameters.query['signature'],
+                    int(blueprint.minter.stark_key)):
+                return web.HTTPUnauthorized()
+
+            token_contract = TokenContract(
+                address=context.data['address'],
+                fungible=False,
+                blueprint=blueprint,
+                name=context.data['name'],
+                symbol=context.data['symbol'],
+                decimals=0,
+                base_uri=context.data['base_uri'],
+                image=context.data['image'])
+            session.add(token_contract)
+
+            req, signature = request.config_dict['forwarder'].forward(
+                *request.config_dict['ether_fluence'].register_contract(
+                    token_contract.address, ContractKind.ERC721, int(blueprint.minter.stark_key)))
             await session.commit()
-        except IntegrityError:
-            return web.HTTPBadRequest()
 
-        return web.json_response(BlueprintSchema().dump(blueprint))
+            return web.json_response({
+                'req': ReqSchema().dump(req),
+                'signature': signature,
+            })
 
 
 @routes.get('/_metadata/{permanent_id}/{token_id}')
@@ -77,123 +203,9 @@ async def get_metadata_by_permanent_id(request: Request):
             join(Token.contract).
             join(TokenContract.blueprint).
             where(Token.token_id == parse_int(request.match_info['token_id'])).
-            where(Blueprint.permanent_id == request.match_info['permanent_id']))).sclar_one()
+            where(Blueprint.permanent_id == request.match_info['permanent_id']))).scalar_one()
 
         return web.json_response(token.asset_metadata)
-
-
-@routes.get('/collections')
-async def get_collections(request: Request):
-    page = parse_int(request.query.get('page', '1'))
-    size = parse_int(request.query.get('size', '100'))
-    owner = request.query.get('owner')
-
-    async with request.config_dict['async_session']() as session:
-        from fluence.models import TokenContract, TokenContractSchema, Account, Blueprint
-
-        def augment(stmt):
-            stmt = stmt.where(TokenContract.fungible == false())
-            if owner:
-                stmt = stmt.join(TokenContract.blueprint). \
-                    join(Blueprint.minter). \
-                    where(Account.address == owner)
-
-            return stmt
-
-        query = augment(select(TokenContract)). \
-            order_by(desc(TokenContract.id)). \
-            limit(size). \
-            offset(size * (page - 1))
-        count = augment(select(functions.count()).select_from(TokenContract))
-
-        return web.json_response({
-            'data': list(map(
-                TokenContractSchema().dump,
-                (await session.execute(
-                    query.options(
-                        selectinload(TokenContract.blueprint).selectinload(Blueprint.minter)))).scalars())),
-            'total': (await session.execute(count)).scalar_one(),
-        })
-
-
-@routes.post('/collections')
-async def register_collection(request: Request):
-    data = await request.json()
-    async with request.config_dict['async_session']() as session:
-        from fluence.models import TokenContract, Account, Blueprint
-
-        if 'blueprint' in data:
-            blueprint = (await session.execute(
-                select(Blueprint).
-                where(Blueprint.permanent_id == data['blueprint']).
-                options(
-                    selectinload(Blueprint.minter),
-                    selectinload(Blueprint.contract)))).scalar_one()
-            if blueprint.contract:
-                return web.HTTPBadRequest()
-        else:
-            minter = parse_int(data['minter'])
-            try:
-                account = (await session.execute(
-                    select(Account).
-                    where(Account.address == minter))).scalar_one()
-            except NoResultFound:
-                account = Account(stark_key=data['minter'])
-                session.add(account)
-
-            blueprint = Blueprint(account)
-            session.add(blueprint)
-
-        if not authenticate(
-                [data['address'],
-                 data['name'].encode(),
-                 data['symbol'].encode(),
-                 data['base_uri'].encode(),
-                 data['image'].encode()],
-                request.query['signature'],
-                int(blueprint.minter.stark_key)):
-            return web.HTTPUnauthorized()
-
-        token_contract = TokenContract(
-            address=data['address'],
-            fungible=False,
-            blueprint=blueprint,
-            name=data['name'],
-            symbol=data['symbol'],
-            decimals=0,
-            base_uri=data['base_uri'],
-            image=data['image'])
-        session.add(token_contract)
-
-        req, signature = request.config_dict['forwarder'].forward(
-            *request.config_dict['ether_fluence'].register_contract(
-                token_contract.address, ContractKind.ERC721, int(blueprint.minter.stark_key)))
-        await session.commit()
-
-        return web.json_response({
-            'req': ReqSchema().dump(req),
-            'signature': signature,
-        })
-
-
-@routes.get('/clients')
-async def get_client(request: Request):
-    stark_key = await request.config_dict['fluence']. \
-        get_client(request.query['address'])
-
-    return web.json_response({'stark_key': str(stark_key)})
-
-
-@routes.post('/clients')
-async def register_client(request: Request):
-    data = await request.json()
-    tx = await request.config_dict['fluence'].register_client(
-        data['stark_key'],
-        data['address'],
-        data['nonce'],
-        request.query['signature'].split(','))
-
-    return web.json_response({'transaction_hash': tx})
 
 
 @routes.get('/tokens')
@@ -309,7 +321,7 @@ async def update_metadata(request: Request):
 
         if not authenticate(
                 [token_contract.address, token_id, token.nonce],
-                request.query['signature'],
+                request.query['signature'].split(','),
                 int(token_contract.blueprint.minter.stark_key)):
             return web.HTTPUnauthorized()
 
@@ -470,7 +482,7 @@ async def upload(request: Request):
     return web.json_response({'asset': asset})
 
 
-def authenticate(message: list[Union[int, str, bytes]], signature: str, stark_key: int) -> bool:
+def authenticate(message: list[Union[int, str, bytes]], signature: list[str], stark_key: int) -> bool:
     import hashlib
 
     message_hash = functools.reduce(
@@ -479,7 +491,7 @@ def authenticate(message: list[Union[int, str, bytes]], signature: str, stark_ke
             parse_int(x) if not isinstance(x, bytes) else
             int.from_bytes(hashlib.sha1(x).digest(), byteorder='big'),
             reversed(message)), 0)
-    r, s = map(parse_int, signature.split(','))
+    r, s = map(parse_int, signature)
 
     return verify(message_hash, r, s, stark_key)
 
@@ -517,6 +529,15 @@ def serve():
     app['bucket_root'] = Path(config('BUCKET_ROOT'))
     app.add_routes([web.post('/fs', upload),
                     web.static('/fs', app['bucket_root'])])
+
+    from yaml import load
+    try:
+        from yaml import CLoader as Loader
+    except ImportError:
+        from yaml import Loader
+
+    schema = load(pkg_resources.resource_string(__name__, 'openapi.yaml'), Loader=Loader)
+    setup_openapi(app, operations, schema=schema, spec=create_spec(schema))
 
     cors = aiohttp_cors.setup(app, defaults={
         '*': aiohttp_cors.ResourceOptions(allow_headers='*'),

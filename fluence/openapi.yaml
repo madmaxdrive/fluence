@@ -1,0 +1,294 @@
+openapi: 3.0.0
+info:
+  title: Fluence
+  version: 0.1.0
+servers:
+  - url: '/v1'
+
+components:
+  schemas:
+    Account:
+      type: object
+      properties:
+        stark_key:
+          type: string
+        address:
+          type: string
+          nullable: true
+      required: [stark_key]
+
+    Blueprint:
+      type: object
+      properties:
+        permanet_id:
+          type: string
+          nullable: true
+        minter:
+          $ref: '#/components/schemas/Account'
+        expire_at:
+          type: string
+          nullable: true
+      required: [minter]
+
+    Collection:
+      type: object
+      properties:
+        address:
+          type: string
+        fungible:
+          type: boolean
+        blueprint:
+          $ref: '#/components/schemas/Blueprint'
+        name:
+          type: string
+        symbol:
+          type: string
+        decimals:
+          type: integer
+        image:
+          type: string
+          nullable: true
+      required: [address, fungible, name, symbol, decimals]
+
+    Tx:
+      type: object
+      properties:
+        transaction_hash:
+          type: string
+      required: [transaction_hash]
+
+paths:
+  /contracts:
+    get:
+      operationId: get_contracts
+      summary: Get fluence contract addresses
+      description: Retrieves fluence and forwarder ethereum addresses
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  fluence:
+                    type: string
+                  forwarder:
+                    type: string
+                required: [fluence, forwarder]
+
+  /clients/{address}:
+    parameters:
+      - name: address
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      operationId: get_client
+      summary: Get client stark key
+      description: Find client stark key by ethereum address
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stark_key:
+                    type: string
+                required: [stark_key]
+        '404':
+          description: The address is not registered yet.
+
+    put:
+      operationId: register_client
+      summary: Register client ethereum address
+      description: Register a stark key and a matching ethereum address
+      parameters:
+        - name: nonce
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([address, nonce])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                stark_key:
+                  type: string
+              required: [name]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tx'
+
+  /blueprints:
+    post:
+      operationId: create_blueprint
+      summary: Setup a permanent id
+      description: Setup a permanent id and the minter
+      parameters:
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([permanent_id])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                permanent_id:
+                  type: string
+                minter:
+                  type: string
+              required: [permanent_id, minter]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permanent_id:
+                    type: string
+                  minter:
+                    $ref: '#/components/schemas/Account'
+                  expire_at:
+                    type: string
+                required: [permanent_id, minter, expire_at]
+
+  /collections:
+    get:
+      operationId: find_collections
+      summary: Find collections
+      description: Find collections by owner
+      parameters:
+        - name: owner
+          in: query
+          description: Ethereum address
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: size
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Collection'
+                  total:
+                    type: number
+                required: [data, total]
+
+    post:
+      operationId: register_collection
+      summary: Register collection
+      description: |
+        Register a collection and construct a forward registration request with signature.
+      parameters:
+        - name: signature
+          in: query
+          description: |
+            `sign([address, name, symbol, base_uri, image])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              allOf:
+                - type: object
+                  properties:
+                    address:
+                      type: string
+                    name:
+                      type: string
+                    symbol:
+                      type: string
+                    base_uri:
+                      type: string
+                    image:
+                      type: string
+                  required: [address, name, symbol, base_uri, image]
+                - oneOf:
+                    - type: object
+                      properties:
+                        blueprint:
+                          type: string
+                      required: [blueprint]
+                    - type: object
+                      properties:
+                        minter:
+                          type: string
+                      required: [minter]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  req:
+                    type: object
+                    properties:
+                      from:
+                        type: string
+                      to:
+                        type: string
+                      value:
+                        type: string
+                      gas:
+                        type: string
+                      batch:
+                        type: string
+                      nonce:
+                        type: string
+                      data:
+                        type: string
+                    required: [from, to, value, gas, batch, nonce, data]
+                  signature:
+                    type: string
+                required: [req, signature]
