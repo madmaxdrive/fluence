@@ -32,7 +32,7 @@ class ERC721Metadata:
     def __init__(self, address: ChecksumAddress, w3: Web3):
         self.contract = w3.eth.contract(
             address,
-            abi=pkg_resources.resource_string(__name__, 'abi/IERC721Metadata.abi'))
+            abi=pkg_resources.resource_string(__name__, 'abi/IERC721Metadata.abi').decode())
 
     def identify(self) -> tuple[str, str, int]:
         return (

@@ -15,7 +15,7 @@ from web3 import Web3
 from web3.exceptions import BadFunctionCallOutput
 
 from fluence.contracts import ERC20, ERC721Metadata
-from fluence.models import Account, TokenContract, Token, LimitOrder, Block, StarkContract
+from fluence.models import Account, TokenContract, Token, LimitOrder, Block, StarkContract, Blueprint
 from fluence.models.LimitOrder import Side
 from fluence.models.TokenContract import KIND_ERC721
 from fluence.models.Transaction import Transaction, TYPE_DEPLOY
@@ -48,12 +48,24 @@ class FluenceInterpreter:
     async def register_contract(self, tx: Transaction):
         logging.warning(f'register_contract')
         _from_address, contract, kind, mint = tx.calldata
-        minter = self.lift_account(mint)
-        token_contract = TokenContract(
-            address=to_address(contract),
-            fungible=int(kind) != KIND_ERC721,
-            minter=minter)
-        self.session.add(self.lift_contract(token_contract))
+        address = to_address(contract)
+        try:
+            token_contract = (await self.session.execute(
+                select(TokenContract).
+                where(TokenContract.address == address).
+                options(selectinload(TokenContract.blueprint).
+                        selectinload(Blueprint.minter)))).scalar_one()
+            assert token_contract.fungible == (int(kind) != KIND_ERC721)
+            assert token_contract.blueprint.minter.stark_key == Decimal(mint)
+        except NoResultFound:
+            minter = await self.lift_account(mint)
+            blueprint = Blueprint(minter=minter)
+            self.session.add(blueprint)
+            token_contract = TokenContract(
+                address=to_address(contract),
+                fungible=int(kind) != KIND_ERC721,
+                blueprint=blueprint)
+            self.session.add(self.lift_contract(token_contract))
 
     async def register_client(self, tx: Transaction):
         logging.warning(f'register_client')
@@ -169,7 +181,7 @@ class FluenceInterpreter:
 
         try:
             token.token_uri = urljoin(token_contract.base_uri, str(token_id)) if token_contract.base_uri else \
-                ERC721Metadata(token_contract.address, self.w3).token_uri(token_id)
+                ERC721Metadata(token_contract.address, self.w3).token_uri(int(token_id))
             async with self.client.get(token.token_uri) as resp:
                 token.asset_metadata = await resp.json()
 

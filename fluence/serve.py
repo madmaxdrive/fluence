@@ -2,6 +2,7 @@ import functools
 from decimal import Decimal
 from typing import Union
 
+import aiohttp_cors
 import pendulum
 from aiohttp import web
 from aiohttp.web_request import Request
@@ -9,7 +10,7 @@ from decouple import config
 from eth_account import Account
 from jsonschema.exceptions import ValidationError
 from services.external_api.base_client import RetryConfig
-from sqlalchemy import select, null, true, desc
+from sqlalchemy import select, null, desc, false
 from sqlalchemy.exc import NoResultFound, IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import functions
@@ -91,7 +92,7 @@ async def get_collections(request: Request):
         from fluence.models import TokenContract, TokenContractSchema, Account, Blueprint
 
         def augment(stmt):
-            stmt = stmt.where(TokenContract.fungible == true())
+            stmt = stmt.where(TokenContract.fungible == false())
             if owner:
                 stmt = stmt.join(TokenContract.blueprint). \
                     join(Blueprint.minter). \
@@ -155,7 +156,7 @@ async def register_collection(request: Request):
 
         token_contract = TokenContract(
             address=data['address'],
-            fungible=True,
+            fungible=False,
             blueprint=blueprint,
             name=data['name'],
             symbol=data['symbol'],
@@ -516,5 +517,11 @@ def serve():
     app['bucket_root'] = Path(config('BUCKET_ROOT'))
     app.add_routes([web.post('/fs', upload),
                     web.static('/fs', app['bucket_root'])])
+
+    cors = aiohttp_cors.setup(app, defaults={
+        '*': aiohttp_cors.ResourceOptions(allow_headers='*'),
+    })
+    for each in app.router.routes():
+        cors.add(each)
 
     web.run_app(app, port=4000)

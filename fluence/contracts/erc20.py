@@ -7,7 +7,7 @@ class ERC20:
     def __init__(self, address: ChecksumAddress, w3: Web3):
         self.contract = w3.eth.contract(
             address,
-            abi=pkg_resources.resource_string(__name__, 'abi/ERC20.abi'))
+            abi=pkg_resources.resource_string(__name__, 'abi/ERC20.abi').decode())
 
     def identity(self) -> tuple[str, str, int]:
         return (
