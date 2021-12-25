@@ -50,6 +50,28 @@ components:
           nullable: true
       required: [address, fungible, name, symbol, decimals]
 
+    Metadata:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        image:
+          type: string
+      required: [name, description, image]
+
+    Token:
+      allOf:
+        - $ref: '#/components/schemas/Metadata'
+        - type: object
+          properties:
+            contract:
+              $ref: '#/components/schemas/Collection'
+            token_id:
+              type: string
+          required: [contract, token_id]
+
     Tx:
       type: object
       properties:
@@ -62,7 +84,7 @@ paths:
     get:
       operationId: get_contracts
       summary: Get fluence contract addresses
-      description: Retrieves fluence and forwarder ethereum addresses
+      description: Retrieves fluence and forwarder ethereum addresses.
       responses:
         '200':
           description: OK
@@ -88,7 +110,7 @@ paths:
     get:
       operationId: get_client
       summary: Get client stark key
-      description: Find client stark key by ethereum address
+      description: Find client stark key by ethereum address.
       responses:
         '200':
           description: OK
@@ -106,7 +128,7 @@ paths:
     put:
       operationId: register_client
       summary: Register client ethereum address
-      description: Register a stark key and a matching ethereum address
+      description: Register a stark key and a matching ethereum address.
       parameters:
         - name: nonce
           in: query
@@ -144,7 +166,7 @@ paths:
     post:
       operationId: create_blueprint
       summary: Setup a permanent id
-      description: Setup a permanent id and the minter
+      description: Setup a permanent id and the minter.
       parameters:
         - name: signature
           in: query
@@ -187,7 +209,7 @@ paths:
     get:
       operationId: find_collections
       summary: Find collections
-      description: Find collections by owner
+      description: Find collections by owner.
       parameters:
         - name: owner
           in: query
@@ -215,7 +237,7 @@ paths:
                     items:
                       $ref: '#/components/schemas/Collection'
                   total:
-                    type: number
+                    type: integer
                 required: [data, total]
 
     post:
@@ -292,3 +314,336 @@ paths:
                   signature:
                     type: string
                 required: [req, signature]
+
+  /_metadata/{permanent_id}/{token_id}:
+    get:
+      operationId: get_metadata_by_permanent_id
+      summary: Get token metadata
+      description: Get token metadata by (collection) permanent ID and token ID.
+      parameters:
+        - name: permanent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Metadata'
+        '404':
+          description: The token is not found.
+
+  /collections/{address}/tokens/{token_id}/_metadata:
+    parameters:
+      - name: address
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      operationId: get_metadata
+      summary: Get token metadata
+      description: Get token metadata by collection address and token ID.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Metadata'
+        '404':
+          description: The token is not found.
+
+    put:
+      operationId: update_metadata
+      summary: Update token metadata
+      description: Update token metadata by collection address and token ID.
+      parameters:
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([address, token_id, nonce])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Metadata'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Token'
+        '400':
+          description: |
+            The metadata does not conform to the ERC721 metadata JSON Schema.
+        '401':
+          description: |
+            The request is not correctly signed by the registered minter.
+        '404':
+          description: |
+            The collection is not registered yet or not (registered as) mintable.
+
+  /tokens:
+    get:
+      operationId: find_tokens
+      summary: Find tokens
+      description: Find tokens by collection and/or owner.
+      parameters:
+        - name: owner
+          in: query
+          description: Ethereum address
+          schema:
+            type: string
+        - name: collection
+          in: query
+          description: Contract address
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: size
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Token'
+                  total:
+                    type: integer
+                required: [data, total]
+
+  /balance:
+    get:
+      operationId: get_balance
+      summary: Get balance
+      description: Get balance by user (stark key) and contract (address).
+      parameters:
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: contract
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  balance:
+                    type: string
+
+  /owner:
+    get:
+      operationId: get_owner
+      summary: Get token owner
+      description: Get owner by contract (address) and token ID.
+      parameters:
+        - name: token_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: contract
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  owner:
+                    type: string
+
+  /mint:
+    post:
+      operationId: mint
+      summary: Mint
+      description: |
+        Mint token identified by `contract` and `token_id` to `user`.
+      parameters:
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([user, token_id, contract, nonce])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user:
+                  type: string
+                token_id:
+                  type: string
+                contract:
+                  type: string
+                nonce:
+                  type: string
+              required: [user, token_id, contract, nonce]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tx'
+
+  /withdraw:
+    post:
+      operationId: withdraw
+      summary: Withdraw token
+      description: |
+        Withdraw token (or tokens) identified by `contract` and `amount_or_token_id`
+        from `user` (stark key) to (ethereum) `address`.
+      parameters:
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([amount_or_token_id, contract, address, nonce])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user:
+                  type: string
+                amount_or_token_id:
+                  type: string
+                contract:
+                  type: string
+                address:
+                  type: string
+                nonce:
+                  type: string
+              required: [user, amount_or_token_id, contract, address, nonce]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tx'
+
+  /transfer:
+    post:
+      operationId: transfer
+      summary: Transfer token
+      description: |
+        Transfer token (or tokens) identified by `contract` and `amount_or_token_id`.
+      parameters:
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([to, amount_or_token_id, contract, nonce])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from:
+                  type: string
+                to:
+                  type: string
+                amount_or_token_id:
+                  type: string
+                contract:
+                  type: string
+                nonce:
+                  type: string
+              required: [to, amount_or_token_id, contract, nonce]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tx'
+
+  /tx/{hash}/_status:
+    get:
+      operationId: get_tx_status
+      summary: Get transaction status
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  block_hash:
+                    type: string
+                  tx_status:
+                    type: string
+                required: [block_hash, tx_status]

@@ -5,6 +5,7 @@ from typing import Union
 import aiohttp_cors
 import pendulum
 import pkg_resources
+import pyrsistent
 from aiohttp import web
 from aiohttp.web_request import Request
 from decouple import config
@@ -193,175 +194,189 @@ async def register_collection(request: Request):
             })
 
 
-@routes.get('/_metadata/{permanent_id}/{token_id}')
+@operations.register
 async def get_metadata_by_permanent_id(request: Request):
-    async with request.config_dict['async_session']() as session:
-        from fluence.models import Token, TokenContract, Blueprint
+    with openapi_context(request) as context:
+        async with request.config_dict['async_session']() as session:
+            from fluence.models import Token, TokenContract, Blueprint
 
-        token = (await session.execute(
-            select(Token).
-            join(Token.contract).
-            join(TokenContract.blueprint).
-            where(Token.token_id == parse_int(request.match_info['token_id'])).
-            where(Blueprint.permanent_id == request.match_info['permanent_id']))).scalar_one()
+            try:
+                token = (await session.execute(
+                    select(Token).
+                    join(Token.contract).
+                    join(TokenContract.blueprint).
+                    where(Token.token_id == parse_int(context.parameters.path['token_id'])).
+                    where(Blueprint.permanent_id == context.parameters.path['permanent_id']))).scalar_one()
 
-        return web.json_response(token.asset_metadata)
-
-
-@routes.get('/tokens')
-async def get_tokens(request: Request):
-    page = parse_int(request.query.get('page', '1'))
-    size = parse_int(request.query.get('size', '100'))
-    owner = request.query.get('owner')
-    collection = request.query.get('collection')
-
-    async with request.config_dict['async_session']() as session:
-        from fluence.models import Token, TokenSchema, TokenContract, Account, Blueprint
-
-        def augment(stmt):
-            if owner:
-                stmt = stmt.join(Token.owner). \
-                    where(Account.address == owner)
-            if collection:
-                stmt = stmt.join(Token.contract). \
-                    where(TokenContract.address == collection)
-
-            return stmt
-
-        query = augment(select(Token)). \
-            order_by(desc(Token.id)). \
-            limit(size). \
-            offset(size * (page - 1))
-        count = augment(select(functions.count()).select_from(Token))
-
-        return web.json_response({
-            'data': list(map(
-                TokenSchema().dump,
-                (await session.execute(
-                    query.options(
-                        selectinload(Token.contract).
-                        selectinload(TokenContract.blueprint).
-                        selectinload(Blueprint.minter)))).scalars())),
-            'total': (await session.execute(count)).scalar_one(),
-        })
+                return web.json_response(token.asset_metadata)
+            except NoResultFound:
+                return web.HTTPNotFound()
 
 
-@routes.get('/balance')
-async def get_balance(request: Request):
-    balance = await request.config_dict['fluence'].get_balance(
-        request.query['user'],
-        request.query['contract'])
-
-    return web.json_response({'balance': str(balance)})
-
-
-@routes.get('/owner')
-async def get_owner(request: Request):
-    owner = await request.config_dict['fluence'].get_owner(
-        request.query['token_id'],
-        request.query['contract'])
-
-    return web.json_response({'owner': str(owner)})
-
-
-@routes.post('/mint')
-async def mint(request: Request):
-    data = await request.json()
-    tx = await request.config_dict['fluence'].mint(
-        data['user'],
-        data['amount_or_token_id'],
-        data['contract'],
-        data['nonce'],
-        request.query['signature'].split(','))
-
-    return web.json_response({'transaction_hash': tx})
-
-
-@routes.get('/collections/{address}/tokens/{token_id}/_metadata')
+@operations.register
 async def get_metadata(request: Request):
-    async with request.config_dict['async_session']() as session:
-        from fluence.models import TokenContract, Token
+    with openapi_context(request) as context:
+        token_id = parse_int(context.parameters.path['token_id'])
+        address = Web3.toChecksumAddress(context.parameters.path['address'])
+        async with request.config_dict['async_session']() as session:
+            from fluence.models import TokenContract, Token
 
-        token = (await session.execute(
-            select(Token).
-            join(Token.contract).
-            where(Token.token_id == parse_int(request.match_info['token_id'])).
-            where(TokenContract.address == Web3.toChecksumAddress(request.match_info['address'])))).scalar_one()
+            try:
+                token = (await session.execute(
+                    select(Token).
+                    join(Token.contract).
+                    where(Token.token_id == token_id).
+                    where(TokenContract.address == address))).scalar_one()
 
-        return web.json_response(token.asset_metadata)
+                return web.json_response(token.asset_metadata)
+            except NoResultFound:
+                return web.HTTPNotFound()
 
 
-@routes.put('/collections/{address}/tokens/{token_id}/_metadata')
+@operations.register
 async def update_metadata(request: Request):
-    metadata = await request.json()
-    try:
-        ERC721Metadata.validate(metadata)
-    except ValidationError:
-        return web.HTTPBadRequest
-
-    async with request.config_dict['async_session']() as session:
-        from fluence.models import TokenContract, Blueprint, Token, TokenSchema
-
-        token_contract, = (await session.execute(
-            select(TokenContract).
-            where(TokenContract.address == Web3.toChecksumAddress(request.match_info['address'])).
-            options(
-                selectinload(TokenContract.blueprint).
-                selectinload(Blueprint.minter)))).one()
+    with openapi_context(request) as context:
         token_id = parse_int(request.match_info['token_id'])
-        try:
-            token, = (await session.execute(
-                select(Token).
-                where(Token.token_id == token_id).
-                where(Token.contract == token_contract).
-                options(selectinload(Token.contract)))).one()
-        except NoResultFound:
-            token = Token(contract=token_contract, token_id=token_id, nonce=0)
-            session.add(token)
+        address = Web3.toChecksumAddress(context.parameters.path['address'])
+        async with request.config_dict['async_session']() as session:
+            from fluence.models import TokenContract, Blueprint, Token, TokenSchema
 
-        if not authenticate(
-                [token_contract.address, token_id, token.nonce],
-                request.query['signature'].split(','),
-                int(token_contract.blueprint.minter.stark_key)):
-            return web.HTTPUnauthorized()
+            try:
+                token_contract = (await session.execute(
+                    select(TokenContract).
+                    where(TokenContract.address == address).
+                    where(TokenContract.blueprint != null()).
+                    options(
+                        selectinload(TokenContract.blueprint).
+                        selectinload(Blueprint.minter)))).scalar_one()
+            except NoResultFound:
+                return web.HTTPNotFound()
 
-        token.name = metadata['name']
-        token.description = metadata['description']
-        token.image = metadata['image']
-        token.asset_metadata = metadata
-        token.nonce += 1
+            try:
+                token = (await session.execute(
+                    select(Token).
+                    where(Token.token_id == token_id).
+                    where(Token.contract == token_contract).
+                    options(selectinload(Token.contract)))).scalar_one()
+            except NoResultFound:
+                token = Token(contract=token_contract, token_id=token_id, nonce=0)
+                session.add(token)
 
-        await session.commit()
+            if not authenticate(
+                    [token_contract.address, token_id, token.nonce],
+                    context.parameters.query['signature'],
+                    int(token_contract.blueprint.minter.stark_key)):
+                return web.HTTPUnauthorized()
 
-        return web.json_response(TokenSchema().dump(token))
+            token.name = context.data['name']
+            token.description = context.data['description']
+            token.image = context.data['image']
+            token.asset_metadata = pyrsistent.thaw(context.data)
+            token.nonce += 1
+
+            await session.commit()
+
+            return web.json_response(TokenSchema().dump(token))
 
 
-@routes.post('/withdraw')
+@operations.register
+async def find_tokens(request: Request):
+    with openapi_context(request) as context:
+        page = context.parameters.query.get('page', 1)
+        size = context.parameters.query.get('size', 100)
+        owner = context.parameters.query.get('owner')
+        collection = context.parameters.query.get('collection')
+
+        async with request.config_dict['async_session']() as session:
+            from fluence.models import Token, TokenSchema, TokenContract, Account, Blueprint
+
+            def augment(stmt):
+                if owner:
+                    stmt = stmt.join(Token.owner). \
+                        where(Account.address == owner)
+                if collection:
+                    stmt = stmt.join(Token.contract). \
+                        where(TokenContract.address == collection)
+
+                return stmt
+
+            query = augment(select(Token)). \
+                order_by(desc(Token.id)). \
+                limit(size). \
+                offset(size * (page - 1))
+            count = augment(select(functions.count()).select_from(Token))
+
+            return web.json_response({
+                'data': list(map(
+                    TokenSchema().dump,
+                    (await session.execute(
+                        query.options(
+                            selectinload(Token.contract).
+                            selectinload(TokenContract.blueprint).
+                            selectinload(Blueprint.minter)))).scalars())),
+                'total': (await session.execute(count)).scalar_one(),
+            })
+
+
+@operations.register
+async def get_balance(request: Request):
+    with openapi_context(request) as context:
+        balance = await request.config_dict['fluence'].get_balance(
+            context.parameters.query['user'],
+            context.parameters.query['contract'])
+
+        return web.json_response({'balance': str(balance)})
+
+
+@operations.register
+async def get_owner(request: Request):
+    with openapi_context(request) as context:
+        owner = await request.config_dict['fluence'].get_owner(
+            context.parameters.query['token_id'],
+            context.parameters.query['contract'])
+
+        return web.json_response({'owner': str(owner)})
+
+
+@operations.register
+async def mint(request: Request):
+    with openapi_context(request) as context:
+        tx = await request.config_dict['fluence'].mint(
+            context.data['user'],
+            context.data['token_id'],
+            context.data['contract'],
+            context.data['nonce'],
+            context.parameters.query['signature'])
+
+        return web.json_response({'transaction_hash': tx})
+
+
+@operations.register
 async def withdraw(request: Request):
-    data = await request.json()
-    tx = await request.config_dict['fluence'].withdraw(
-        data['user'],
-        data['amount_or_token_id'],
-        data['contract'],
-        data['address'],
-        data['nonce'],
-        request.query['signature'].split(','))
+    with openapi_context(request) as context:
+        tx = await request.config_dict['fluence'].withdraw(
+            context.data['user'],
+            context.data['amount_or_token_id'],
+            context.data['contract'],
+            context.data['address'],
+            context.data['nonce'],
+            context.parameters.query['signature'])
 
-    return web.json_response({'transaction_hash': tx})
+        return web.json_response({'transaction_hash': tx})
 
 
-@routes.post('/transfer')
+@operations.register
 async def transfer(request: Request):
-    data = await request.json()
-    tx = await request.config_dict['fluence'].transfer(
-        data['from'],
-        data['to'],
-        data['amount_or_token_id'],
-        data['contract'],
-        data['nonce'],
-        request.query['signature'].split(','))
+    with openapi_context(request) as context:
+        tx = await request.config_dict['fluence'].transfer(
+            context.data['from'],
+            context.data['to'],
+            context.data['amount_or_token_id'],
+            context.data['contract'],
+            context.data['nonce'],
+            context.parameters.query['signature'])
 
-    return web.json_response({'transaction_hash': tx})
+        return web.json_response({'transaction_hash': tx})
 
 
 @routes.get('/orders')
@@ -450,7 +465,7 @@ async def fulfill_order(request: Request):
     return web.json_response({'transaction_hash': tx})
 
 
-@routes.get('/tx/{hash}/_status')
+@operations.register
 async def get_tx_status(request: Request):
     status = await request.config_dict['feeder_gateway']. \
         get_transaction_status(request.match_info['hash'])
