@@ -468,9 +468,28 @@ async def fulfill_order(request: Request):
 @operations.register
 async def get_tx_status(request: Request):
     status = await request.config_dict['feeder_gateway']. \
-        get_transaction_status(request.match_info['hash'])
+        get_transaction_status(tx_hash=request.match_info['hash'])
 
     return web.json_response(status)
+
+
+@routes.get('/tx/{hash}/_inspect')
+async def inspect_tx(request: Request):
+    from starkware.starknet.public.abi import get_selector_from_name
+
+    tx = await request.config_dict['feeder_gateway']. \
+        get_transaction(tx_hash=request.match_info['hash'])
+    if parse_int(tx['transaction']['entry_point_selector']) != get_selector_from_name('transfer') or \
+            tx['transaction']['entry_point_type'] != 'EXTERNAL':
+        return web.HTTPNotFound()
+
+    return web.json_response({
+        'function': 'transfer',
+        'inputs': dict(zip(
+            ['from', 'to', 'amount_or_token_id', 'contract', 'nonce'],
+            tx['transaction']['calldata'])),
+        'status': tx['status'],
+    })
 
 
 async def upload(request: Request):
