@@ -3,12 +3,15 @@ from enum import IntEnum
 
 import pkg_resources
 from eth_typing import ChecksumAddress, HexStr
+from marshmallow import Schema, fields
 from starkware.starknet.public.abi import get_selector_from_name
 from starkware.starknet.services.api.feeder_gateway.feeder_gateway_client import FeederGatewayClient
 from starkware.starknet.services.api.gateway.gateway_client import GatewayClient
 from starkware.starknet.services.api.gateway.transaction import InvokeFunction
 from web3 import Web3
 
+from fluence import utils
+from fluence.models import State
 from fluence.utils import parse_int
 
 LimitOrder = namedtuple('LimitOrder', [
@@ -20,6 +23,15 @@ LimitOrder = namedtuple('LimitOrder', [
     'quote_amount',
     'state',
 ])
+LimitOrderSchema = Schema.from_dict({
+    'user': fields.String(),
+    'bid': fields.Boolean(),
+    'base_contract': fields.Function(lambda x: utils.to_address(x.base_contract)),
+    'base_token_id': fields.String(),
+    'quote_contract': fields.Function(lambda x: utils.to_address(x.quote_contract)),
+    'quote_amount': fields.String(),
+    'state': fields.Function(lambda x: State(x.state).name),
+})
 
 
 class ContractKind(IntEnum):

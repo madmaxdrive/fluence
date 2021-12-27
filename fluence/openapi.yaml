@@ -5,6 +5,31 @@ info:
 servers:
   - url: '/v1'
 
+tags:
+  - name: Overview
+    description: |
+      The Fluence APIs are a bridge to a group of contracts deployed on Ethereum or Starknet.
+      The APIs mostly interact with Starknet, of which the requests should be authenticated
+      with Starknet signatures when necessary. It takes 2 steps to sign a request:
+
+      1. hash the message with [Pedersen hash](https://docs.starkware.co/starkex-v3/crypto/pedersen-hash-function), and
+      2. sign the message hash with [Stark curve](https://docs.starkware.co/starkex-v3/crypto/stark-curve).
+
+      `H` is a Pedersen hash on two field elements, `(a, b)` represented as 252-bit integers,
+      and `H'` is defined as follows to handle an arbitrary length non-empty message:
+      ```
+      H'([x]) = H(x, 0)
+      H'([x, ...xs]) = H(x, H(xs))
+      ```
+      To hash a string element, the `sha1` (as a 160-bit integer) is employed first to
+      substitute the original value.
+
+  - name: client
+  - name: collection
+  - name: metadata
+  - name: token
+  - name: order
+
 components:
   schemas:
     Account:
@@ -72,6 +97,66 @@ components:
               type: string
           required: [contract, token_id]
 
+    LimitOrder:
+      type: object
+      properties:
+        order_id:
+          type: string
+        user:
+          $ref: '#/components/schemas/Account'
+        bid:
+          type: boolean
+        token:
+          $ref: '#/components/schemas/Token'
+        quote_contract:
+          $ref: '#/components/schemas/Collection'
+        quote_amount:
+          type: string
+        state:
+          type: integer
+      required: [order_id, user, bid, token, quote_contract, quote_amount, state]
+
+    TransferRequest:
+      type: object
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        amount_or_token_id:
+          type: string
+        contract:
+          type: string
+        nonce:
+          type: string
+      required: [from, to, amount_or_token_id, contract, nonce]
+
+    LimitOrderRequest:
+      type: object
+      properties:
+        user:
+          type: string
+        bid:
+          type: boolean
+        base_contract:
+          type: string
+        base_token_id:
+          type: string
+        quote_contract:
+          type: string
+        quote_amount:
+          type: string
+      required: [user, bid, base_contract, base_token_id, quote_contract, quote_amount]
+
+    Receipt:
+      type: object
+      properties:
+        function:
+          type: string
+        status:
+          type: string
+      required: [function, status]
+
     Tx:
       type: object
       properties:
@@ -99,42 +184,13 @@ paths:
                     type: string
                 required: [fluence, forwarder]
 
-  /clients/{address}:
-    parameters:
-      - name: address
-        in: path
-        required: true
-        schema:
-          type: string
-
-    get:
-      operationId: get_client
-      summary: Get client stark key
-      description: Find client stark key by ethereum address.
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  stark_key:
-                    type: string
-                required: [stark_key]
-        '404':
-          description: The address is not registered yet.
-
-    put:
+  /clients:
+    post:
       operationId: register_client
       summary: Register client ethereum address
       description: Register a stark key and a matching ethereum address.
+      tags: [client]
       parameters:
-        - name: nonce
-          in: query
-          required: true
-          schema:
-            type: integer
         - name: signature
           in: query
           required: true
@@ -153,7 +209,11 @@ paths:
               properties:
                 stark_key:
                   type: string
-              required: [name]
+                address:
+                  type: string
+                nonce:
+                  type: string
+              required: [stark_key, address, nonce]
       responses:
         '200':
           description: OK
@@ -162,11 +222,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/Tx'
 
+  /clients/{address}:
+    get:
+      operationId: get_client
+      summary: Get client stark key
+      description: Find client stark key by ethereum address.
+      tags: [client]
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stark_key:
+                    type: string
+                required: [stark_key]
+        '404':
+          description: The address is not registered yet.
+
   /blueprints:
     post:
       operationId: create_blueprint
       summary: Setup a permanent id
       description: Setup a permanent id and the minter.
+      tags: [collection]
       parameters:
         - name: signature
           in: query
@@ -210,6 +297,7 @@ paths:
       operationId: find_collections
       summary: Find collections
       description: Find collections by owner.
+      tags: [collection]
       parameters:
         - name: owner
           in: query
@@ -245,6 +333,7 @@ paths:
       summary: Register collection
       description: |
         Register a collection and construct a forward registration request with signature.
+      tags: [collection]
       parameters:
         - name: signature
           in: query
@@ -320,6 +409,7 @@ paths:
       operationId: get_metadata_by_permanent_id
       summary: Get token metadata
       description: Get token metadata by (collection) permanent ID and token ID.
+      tags: [metadata]
       parameters:
         - name: permanent_id
           in: path
@@ -358,6 +448,7 @@ paths:
       operationId: get_metadata
       summary: Get token metadata
       description: Get token metadata by collection address and token ID.
+      tags: [metadata]
       responses:
         '200':
           description: OK
@@ -372,6 +463,7 @@ paths:
       operationId: update_metadata
       summary: Update token metadata
       description: Update token metadata by collection address and token ID.
+      tags: [metadata]
       parameters:
         - name: signature
           in: query
@@ -410,6 +502,7 @@ paths:
       operationId: find_tokens
       summary: Find tokens
       description: Find tokens by collection and/or owner.
+      tags: [token]
       parameters:
         - name: owner
           in: query
@@ -450,6 +543,7 @@ paths:
       operationId: get_balance
       summary: Get balance
       description: Get balance by user (stark key) and contract (address).
+      tags: [token]
       parameters:
         - name: user
           in: query
@@ -477,6 +571,7 @@ paths:
       operationId: get_owner
       summary: Get token owner
       description: Get owner by contract (address) and token ID.
+      tags: [token]
       parameters:
         - name: token_id
           in: query
@@ -505,6 +600,7 @@ paths:
       summary: Mint
       description: |
         Mint token identified by `contract` and `token_id` to `user`.
+      tags: [token]
       parameters:
         - name: signature
           in: query
@@ -546,6 +642,7 @@ paths:
       description: |
         Withdraw token (or tokens) identified by `contract` and `amount_or_token_id`
         from `user` (stark key) to (ethereum) `address`.
+      tags: [token]
       parameters:
         - name: signature
           in: query
@@ -588,6 +685,7 @@ paths:
       summary: Transfer token
       description: |
         Transfer token (or tokens) identified by `contract` and `amount_or_token_id`.
+      tags: [token]
       parameters:
         - name: signature
           in: query
@@ -603,19 +701,184 @@ paths:
         content:
           application/json:
             schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tx'
+
+  /orders:
+    get:
+      operationId: find_orders
+      summary: Find orders
+      description: Find orders by user and/or collection.
+      tags: [order]
+      parameters:
+        - name: user
+          in: query
+          description: Stark key
+          schema:
+            type: string
+        - name: collection
+          in: query
+          description: Contract address
+          schema:
+            type: string
+        - name: side
+          in: query
+          schema:
+            type: string
+            enum: ['ask', 'bid']
+        - name: state
+          in: query
+          description: |
+            `NEW`, `FULFILLED` or `CANCELLED`
+          schema:
+            type: integer
+            enum: [0, 1, 2]
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: size
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LimitOrder'
+                  total:
+                    type: integer
+                required: [data, total]
+
+    post:
+      operationId: create_order
+      summary: Create order
+      tags: [order]
+      parameters:
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([order_id, bid, base_contract, base_token_id, quote_contract, quote_amount])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/LimitOrderRequest'
+                - type: object
+                  properties:
+                    order_id:
+                      type: string
+                  required: [order_id]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tx'
+
+  /orders/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      operationId: get_order
+      summary: Get order
+      tags: [order]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/LimitOrderRequest'
+                  - type: object
+                    properties:
+                      state:
+                        type: string
+                        enum: [NEW, FULFILLED, CANCELLED]
+                    required: [state]
+        '404':
+          description: The order is not found.
+
+    post:
+      operationId: fulfill_order
+      summary: Fulfill order
+      tags: [order]
+      parameters:
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([id, nonce])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
+      requestBody:
+        content:
+          application/json:
+            schema:
               type: object
               properties:
-                from:
-                  type: string
-                to:
-                  type: string
-                amount_or_token_id:
-                  type: string
-                contract:
+                user:
                   type: string
                 nonce:
                   type: string
-              required: [to, amount_or_token_id, contract, nonce]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tx'
+
+    delete:
+      operationId: cancel_order
+      summary: Cancel order
+      tags: [order]
+      parameters:
+        - name: nonce
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: signature
+          in: query
+          required: true
+          description: |
+            `sign([id, nonce])`
+          schema:
+            type: array
+            items:
+              type: string
+          explode: false
       responses:
         '200':
           description: OK
@@ -647,3 +910,30 @@ paths:
                   tx_status:
                     type: string
                 required: [block_hash, tx_status]
+        '404':
+          description: The transaction is not found.
+
+  /tx/{hash}/_inspect:
+    get:
+      operationId: inspect_tx
+      summary: Inspect transaction
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Receipt'
+                  - type: object
+                    properties:
+                      inputs:
+                        $ref: '#/components/schemas/TransferRequest'
+        '404':
+          description: The transaction is not found or is not inspectable.

@@ -1,8 +1,10 @@
 import functools
 from decimal import Decimal
+from enum import Enum
 from typing import Union
 
 import aiohttp_cors
+import click
 import pendulum
 import pkg_resources
 import pyrsistent
@@ -10,11 +12,10 @@ from aiohttp import web
 from aiohttp.web_request import Request
 from decouple import config
 from eth_account import Account
-from jsonschema.exceptions import ValidationError
 from openapi_core import create_spec
 from rororo import OperationTableDef, setup_openapi, openapi_context
 from services.external_api.base_client import RetryConfig
-from sqlalchemy import select, null, desc, false
+from sqlalchemy import select, desc, null, false, true
 from sqlalchemy.exc import NoResultFound, IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import functions
@@ -24,13 +25,20 @@ from starkware.starknet.services.api.feeder_gateway.feeder_gateway_client import
 from starkware.starknet.services.api.gateway.gateway_client import GatewayClient
 from web3 import Web3
 
-from fluence.contracts import ERC721Metadata
 from fluence.contracts.fluence import StarkFluence, LimitOrder, EtherFluence, ContractKind
 from fluence.contracts.forwarder import Forwarder, ReqSchema
 from fluence.utils import parse_int
 
 operations = OperationTableDef()
-routes = web.RouteTableDef()
+
+
+class Status(Enum):
+    NOT_RECEIVED = 'NOT_RECEIVED'
+    RECEIVED = 'RECEIVED'
+    PENDING = 'PENDING'
+    REJECTED = 'REJECTED'
+    ACCEPTED_ON_L2 = 'ACCEPTED_ON_L2'
+    ACCEPTED_ON_L1 = 'ACCEPTED_ON_L1'
 
 
 @operations.register
@@ -42,6 +50,18 @@ async def get_contracts(request: Request):
 
 
 @operations.register
+async def register_client(request: Request):
+    with openapi_context(request) as context:
+        tx = await request.config_dict['fluence']. \
+            register_client(context.data['stark_key'],
+                            context.data['address'],
+                            context.data['nonce'],
+                            context.parameters.query['signature'])
+
+        return web.json_response({'transaction_hash': tx})
+
+
+@operations.register
 async def get_client(request: Request):
     with openapi_context(request) as context:
         stark_key = await request.config_dict['fluence']. \
@@ -50,18 +70,6 @@ async def get_client(request: Request):
             return web.HTTPNotFound()
 
         return web.json_response({'stark_key': str(stark_key)})
-
-
-@operations.register
-async def register_client(request: Request):
-    with openapi_context(request) as context:
-        tx = await request.config_dict['fluence']. \
-            register_client(context.data['stark_key'],
-                            context.parameters.path['address'],
-                            context.parameters.query['nonce'],
-                            context.parameters.query['signature'])
-
-        return web.json_response({'transaction_hash': tx})
 
 
 @operations.register
@@ -379,17 +387,18 @@ async def transfer(request: Request):
         return web.json_response({'transaction_hash': tx})
 
 
-@routes.get('/orders')
-async def get_orders(request: Request):
-    page = parse_int(request.query.get('page', '1'))
-    size = parse_int(request.query.get('size', '100'))
-    user = request.query.get('user')
-    collection = request.query.get('collection')
-    side = request.query.get('side')
-    state = request.query.get('state')
+@operations.register
+async def find_orders(request: Request):
+    with openapi_context(request) as context:
+        page = context.parameters.query.get('page', 1)
+        size = context.parameters.query.get('size', 100)
+        user = context.parameters.query.get('user')
+        collection = context.parameters.query.get('collection')
+        side = context.parameters.query.get('side')
+        state = context.parameters.query.get('state')
 
     async with request.config_dict['async_session']() as session:
-        from fluence.models import LimitOrder, LimitOrderSchema, State, Account, Token, TokenContract
+        from fluence.models import LimitOrder, LimitOrderSchema, Account, Token, TokenContract
 
         def augment(stmt):
             if user:
@@ -399,10 +408,10 @@ async def get_orders(request: Request):
                 stmt = stmt.join(LimitOrder.token). \
                     join(Token.contract). \
                     where(TokenContract.address == collection)
-            if side in ['ask', 'bid']:
+            if side:
                 stmt = stmt.where(LimitOrder.bid == (side == 'bid'))
             if state:
-                stmt = stmt.where(LimitOrder.fulfilled == [null(), True, False][State(parse_int(state))])
+                stmt = stmt.where(LimitOrder.fulfilled == [null(), true(), false()][state])
 
             return stmt
 
@@ -424,62 +433,70 @@ async def get_orders(request: Request):
         })
 
 
-@routes.get('/orders/{id}')
-async def get_order(request: Request):
-    limit_order = await request.config_dict['fluence']. \
-        get_order(request.match_info['id'])
-
-    return web.json_response(limit_order._asdict())
-
-
-@routes.put('/orders/{id}')
+@operations.register
 async def create_order(request: Request):
-    data = await request.json()
-    tx = await request.config_dict['fluence'].create_order(
-        request.match_info['id'],
-        LimitOrder(**data, state=0),
-        request.query['signature'].split(','))
+    with openapi_context(request) as context:
+        tx = await request.config_dict['fluence'].create_order(
+            context.data['order_id'],
+            LimitOrder(**context.data.discard('order_id'), state=0),
+            context.parameters.query['signature'])
 
-    return web.json_response({'transaction_hash': tx})
-
-
-@routes.delete('/orders/{id}')
-async def cancel_order(request: Request):
-    tx = await request.config_dict['fluence'].cancel_order(
-        request.match_info['id'],
-        request.query['nonce'],
-        request.query['signature'].split(','))
-
-    return web.json_response({'transaction_hash': tx})
+        return web.json_response({'transaction_hash': tx})
 
 
-@routes.post('/orders/{id}')
+@operations.register
+async def get_order(request: Request):
+    with openapi_context(request) as context:
+        from fluence.contracts import LimitOrderSchema
+
+        limit_order = await request.config_dict['fluence'].get_order(context.parameters.path['id'])
+        if parse_int(limit_order.user) == 0:
+            return web.HTTPNotFound()
+
+        return web.json_response(LimitOrderSchema().dump(limit_order))
+
+
+@operations.register
 async def fulfill_order(request: Request):
-    data = await request.json()
-    tx = await request.config_dict['fluence'].fulfill_order(
-        request.match_info['id'],
-        data['user'],
-        data['nonce'],
-        request.query['signature'].split(','))
+    with openapi_context(request) as context:
+        tx = await request.config_dict['fluence'].fulfill_order(
+            context.parameters.path['id'],
+            context.data['user'],
+            context.data['nonce'],
+            context.parameters.query['signature'])
 
-    return web.json_response({'transaction_hash': tx})
+        return web.json_response({'transaction_hash': tx})
+
+
+@operations.register
+async def cancel_order(request: Request):
+    with openapi_context(request) as context:
+        tx = await request.config_dict['fluence'].cancel_order(
+            context.parameters.path['id'],
+            context.parameters.query['nonce'],
+            context.parameters.query['signature'])
+
+        return web.json_response({'transaction_hash': tx})
 
 
 @operations.register
 async def get_tx_status(request: Request):
     status = await request.config_dict['feeder_gateway']. \
         get_transaction_status(tx_hash=request.match_info['hash'])
+    if status['tx_status'] == Status.NOT_RECEIVED.value:
+        return web.HTTPNotFound()
 
     return web.json_response(status)
 
 
-@routes.get('/tx/{hash}/_inspect')
+@operations.register
 async def inspect_tx(request: Request):
     from starkware.starknet.public.abi import get_selector_from_name
 
     tx = await request.config_dict['feeder_gateway']. \
         get_transaction(tx_hash=request.match_info['hash'])
-    if parse_int(tx['transaction']['entry_point_selector']) != get_selector_from_name('transfer') or \
+    if tx['status'] == Status.NOT_RECEIVED.value or \
+            parse_int(tx['transaction']['entry_point_selector']) != get_selector_from_name('transfer') or \
             tx['transaction']['entry_point_type'] != 'EXTERNAL':
         return web.HTTPNotFound()
 
@@ -530,7 +547,9 @@ def authenticate(message: list[Union[int, str, bytes]], signature: list[str], st
     return verify(message_hash, r, s, stark_key)
 
 
-def serve():
+@click.command()
+@click.option('--port', default=4000, type=int)
+def serve(port: int):
     from pathlib import Path
     from .services import async_session
 
@@ -556,10 +575,6 @@ def serve():
             retry_config=RetryConfig(n_retries=1)))
     app['async_session'] = async_session
 
-    v1 = web.Application()
-    v1.add_routes(routes)
-    app.add_subapp('/api/v1', v1)
-
     app['bucket_root'] = Path(config('BUCKET_ROOT'))
     app.add_routes([web.post('/fs', upload),
                     web.static('/fs', app['bucket_root'])])
@@ -579,4 +594,4 @@ def serve():
     for each in app.router.routes():
         cors.add(each)
 
-    web.run_app(app, port=4000)
+    web.run_app(app, port=port)

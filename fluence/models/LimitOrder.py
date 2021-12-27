@@ -59,4 +59,4 @@ class LimitOrderSchema(Schema):
     token = fields.Nested(TokenSchema())
     quote_contract = fields.Nested(TokenContractSchema())
     quote_amount = fields.String()
-    state = fields.Integer()
+    state = fields.Function(lambda x: x.state.name)
