@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import click
 from services.external_api.base_client import BadRequest
+from sqlalchemy import delete, select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.future import select
 from sqlalchemy.orm import sessionmaker
 from starkware.starknet.services.api.feeder_gateway.feeder_gateway_client import FeederGatewayClient
 
@@ -65,6 +65,44 @@ class Crawler:
 
             await asyncio.sleep(self._cooldown)
 
+    async def purge(self, dry=False):
+        block_number, block_number0, error = 0, -1, -1
+        while block_number0 < block_number:
+            if error is not None:
+                block_number, error = error, None
+
+            block_number0 = block_number
+            async with self._async_session() as session:
+                async for block in (await session.stream(
+                        select(Block).
+                        where(~Block._document['status'].astext.in_(['ACCEPTED_ON_L1', 'ACCEPTED_ONCHAIN'])).
+                        where(Block.id > block_number).
+                        order_by(Block.id).
+                        limit(20))).scalars():
+                    logging.warning(f"purge(block_hash={block.hash}, block_number={block.id})")
+                    block_number = block.id
+
+                    try:
+                        document = await self._feeder.get_block(block_hash=block.hash)
+                        assert block.id == document['block_number']
+                    except BadRequest as e:
+                        logging.warning(e)
+                        if error is None:
+                            error = block.id
+                        continue
+
+                    if document['status'] in ['ABORTED']:
+                        logging.warning(f"abort(block_hash={block.hash}, block_number={block.id})")
+                    if dry:
+                        continue
+
+                    block._document = document
+                    if document['status'] in ['ABORTED']:
+                        await session.execute(delete(Transaction).where(Transaction.block == block))
+                        session.delete(block)
+
+                await session.commit()
+
     async def _crawl(self, block_number: int):
         if await self._block_cache.hit(block_number):
             return
@@ -105,10 +143,21 @@ class Crawler:
             await session.commit()
 
 
-@click.command()
-@click.argument('thru', required=False)
-def crawl(thru):
+@click.group(invoke_without_command=True)
+@click.option('--thru')
+@click.pass_context
+def crawl(ctx, thru):
+    if not ctx.invoked_subcommand:
+        from fluence.services import async_session, feeder_client
+
+        crawler = Crawler(feeder_client, async_session, 15)
+        asyncio.run(crawler.run(thru))
+
+
+@crawl.command()
+@click.option('--dry', is_flag=True)
+def purge(dry):
     from fluence.services import async_session, feeder_client
 
     crawler = Crawler(feeder_client, async_session, 15)
-    asyncio.run(crawler.run(thru))
+    asyncio.run(crawler.purge(dry))
