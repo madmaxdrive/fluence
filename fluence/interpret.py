@@ -197,18 +197,15 @@ class FluenceInterpreter:
             token = Token(contract=token_contract, token_id=token_id, nonce=0)
             self.session.add(token)
 
-        try:
-            token.token_uri = urljoin(token_contract.base_uri, str(token_id)) if token_contract.base_uri else \
-                ERC721Metadata(token_contract.address, self.w3).token_uri(int(token_id))
-            async with self.client.get(token.token_uri) as resp:
-                token.asset_metadata = await resp.json()
+        token.token_uri = urljoin(token_contract.base_uri, str(token_id)) if token_contract.base_uri else \
+            ERC721Metadata(token_contract.address, self.w3).token_uri(int(token_id))
+        async with self.client.get(token.token_uri) as resp:
+            token.asset_metadata = await resp.json()
 
-                ERC721Metadata.validate(token.asset_metadata)
-                token.name = token.asset_metadata['name']
-                token.description = token.asset_metadata['description']
-                token.image = token.asset_metadata['image']
-        except (BadFunctionCallOutput, ValueError, ValidationError):
-            pass
+            ERC721Metadata.validate(token.asset_metadata)
+            token.name = token.asset_metadata['name']
+            token.description = token.asset_metadata['description']
+            token.image = token.asset_metadata['image']
 
         return token
 
