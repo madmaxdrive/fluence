@@ -8,8 +8,8 @@ def parse_int(n: Union[int, str]):
     return n if isinstance(n, int) else int(n, 0)
 
 
-def to_address(address) -> ChecksumAddress:
+def to_checksum_address(address) -> ChecksumAddress:
     return Web3.toChecksumAddress('%040x' % parse_int(address))
 
 
-ZERO_ADDRESS = to_address(0)
+ZERO_ADDRESS = to_checksum_address(0)

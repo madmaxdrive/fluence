@@ -26,9 +26,9 @@ LimitOrder = namedtuple('LimitOrder', [
 LimitOrderSchema = Schema.from_dict({
     'user': fields.String(),
     'bid': fields.Boolean(),
-    'base_contract': fields.Function(lambda x: utils.to_address(x.base_contract)),
+    'base_contract': fields.Function(lambda x: utils.to_checksum_address(x.base_contract)),
     'base_token_id': fields.String(),
-    'quote_contract': fields.Function(lambda x: utils.to_address(x.quote_contract)),
+    'quote_contract': fields.Function(lambda x: utils.to_checksum_address(x.quote_contract)),
     'quote_amount': fields.String(),
     'state': fields.Function(lambda x: State(x.state).name),
 })
