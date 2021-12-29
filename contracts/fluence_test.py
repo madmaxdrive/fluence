@@ -1,4 +1,5 @@
 import os
+import time
 from collections import namedtuple
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from starkware.starkware_utils.error_handling import StarkException
 
 CONTRACT_FILE = os.path.join(os.path.dirname(__file__), 'Fluence.cairo')
 DEPOSIT_SELECTOR = 0xc73f681176fc7b3f9693986fd7b14581e8d540519e27400e88b8713932be01
+STAKE_SELECTOR = 0x3a04795accb4b73d12f13b05a1e0e240cefeb9a89d008676730867a819d2f79
 REGISTER_CONTRACT_SELECTOR = 0xe3f5e9e1456ffa52a3fbc7e8c296631d4cc2120c0be1e2829301c0d8fa026b
 L1_ACCOUNT_ADDRESS = 0xFe02793B075106bFC519d6EE667fAcBB11fBB373
 L1_CONTRACT_ADDRESS = 0x13095e61fC38a06041f2502FcC85ccF4100FDeFf
@@ -56,6 +58,12 @@ async def deposit_erc20(contract: StarknetContract, starknet: Starknet):
         DEPOSIT_SELECTOR,
         [STARK_KEY, 5050, ERC20_CONTRACT_ADDRESS, uuid4().int])
 
+async def stake(contract: StarknetContract, starknet: Starknet):
+    await starknet.send_message_to_l2(
+        L1_CONTRACT_ADDRESS,
+        contract.contract_address,
+        STAKE_SELECTOR,
+        [STARK_KEY, 1000000000000000000, round(time.time() * 1000)])
 
 async def mint(contract: StarknetContract):
     await contract. \
@@ -99,6 +107,12 @@ async def test_deposit():
     exec_info = await contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result == (5050,)
 
+@pytest.mark.asyncio
+async def test_stake():
+    (contract, starknet) = await deploy()
+    await stake(contract, starknet)
+    exec_info = await contract.get_staked_balance(STARK_KEY, 0).call()
+    assert exec_info.result[0].amount == 1000000000000000000
 
 @pytest.mark.asyncio
 async def test_withdraw():

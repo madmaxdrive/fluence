@@ -135,6 +135,17 @@ func get_balance{
 end
 
 @view
+func get_staked_balance{
+    syscall_ptr : felt*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    user : felt,
+    stakeId : felt) -> (
+    stake : Stake):
+    return staked_balance.read(user=user, stakeId=stakeId)
+end
+
+@view
 func get_owner{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
@@ -386,11 +397,12 @@ func unstake{
     assert_nn(amount)
 
     let (number) = number_of_stakes.read(user=user)
-    let (last_stake) = staked_balance.read(user=user, stakeId=number)
+    assert_nn(number - 1)
+    let (last_stake) = staked_balance.read(user=user, stakeId=number - 1)
 
     # Shuffle last Stake to current position
     staked_balance.write(user, stakeId, last_stake)
-    staked_balance.write(user, number, Stake(0, 0, 0))
+    staked_balance.write(user, number - 1, Stake(0, 0, 0))
     number_of_stakes.write(user, number - 1)
 
     let (l1_caddr) = l1_contract_address.read()
