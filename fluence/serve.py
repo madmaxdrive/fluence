@@ -3,7 +3,6 @@ from decimal import Decimal
 from enum import Enum
 from typing import Union
 
-import aiohttp_cors
 import click
 import pendulum
 import pkg_resources
@@ -586,12 +585,11 @@ def serve(port: int):
         from yaml import Loader
 
     schema = load(pkg_resources.resource_string(__name__, 'openapi.yaml'), Loader=Loader)
-    setup_openapi(app, operations, schema=schema, spec=create_spec(schema))
-
-    cors = aiohttp_cors.setup(app, defaults={
-        '*': aiohttp_cors.ResourceOptions(allow_headers='*'),
-    })
-    for each in app.router.routes():
-        cors.add(each)
+    setup_openapi(
+        app,
+        operations,
+        schema=schema,
+        spec=create_spec(schema),
+        cors_middleware_kwargs=dict(allow_all=True))
 
     web.run_app(app, port=port)
