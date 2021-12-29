@@ -57,7 +57,7 @@ class Crawler:
                 except BadRequest:
                     cd = loop.time() + self._cooldown
 
-            if i > 1:
+            if i > 0:
                 await self._crawl(i - 1)
                 i -= 1
 
@@ -83,21 +83,20 @@ class Crawler:
                     block_number = block.id
 
                     try:
-                        document = await self._feeder.get_block(block_hash=block.hash)
-                        assert block.id == document['block_number']
+                        document = await self._feeder.get_block(block_number=block.id)
                     except BadRequest as e:
                         logging.warning(e)
                         if error is None:
                             error = block.id
                         continue
 
-                    if document['status'] in ['ABORTED']:
+                    if document['block_hash'] != block.hash or document['status'] in ['ABORTED']:
                         logging.warning(f"abort(block_hash={block.hash}, block_number={block.id})")
                     if dry:
                         continue
 
                     block._document = document
-                    if document['status'] in ['ABORTED']:
+                    if document['block_hash'] != block.hash or document['status'] in ['ABORTED']:
                         await session.execute(delete(Transaction).where(Transaction.block == block))
                         session.delete(block)
 
