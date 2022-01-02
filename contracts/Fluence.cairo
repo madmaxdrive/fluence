@@ -380,10 +380,11 @@ func unstake{
     alloc_locals
 
     let inputs : felt* = alloc()
-    inputs[0] = address
+    inputs[0] = stakeId
     inputs[1] = timestamp
-    inputs[2] = nonce
-    verify_inputs_by_signature(user, 3, inputs)
+    inputs[2] = address
+    inputs[3] = nonce
+    verify_inputs_by_signature(user, 4, inputs)
 
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 

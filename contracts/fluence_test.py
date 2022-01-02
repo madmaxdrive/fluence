@@ -63,7 +63,7 @@ async def stake(contract: StarknetContract, starknet: Starknet):
         L1_CONTRACT_ADDRESS,
         contract.contract_address,
         STAKE_SELECTOR,
-        [STARK_KEY, 1000000000000000000, round(time.time() * 1000)])
+        [STARK_KEY, 1000000000000000000, 1641150065 * 1000])
 
 async def mint(contract: StarknetContract):
     await contract. \
@@ -113,6 +113,26 @@ async def test_stake():
     await stake(contract, starknet)
     exec_info = await contract.get_staked_balance(STARK_KEY, 0).call()
     assert exec_info.result[0].amount == 1000000000000000000
+
+@pytest.mark.asyncio
+async def test_unstake():
+    (contract, starknet) = await deploy()
+    await stake(contract, starknet)
+    await contract. \
+        unstake(user=STARK_KEY,
+                stakeId=0,
+                timestamp=1641150565 * 1000 + 864000000, # 10 days after staking
+                address=L1_ACCOUNT_ADDRESS,
+                nonce=338608066247168814322678008602989124261). \
+        invoke(signature=[876935290743563885213297606353723079534093378583213021840330351513321845141,
+                          936102956039466073993061508392329875300525871586498971538269245046554420634])
+    exec_info = await contract.get_staked_balance(STARK_KEY, 0).call()
+    assert exec_info.result[0].amount == 0
+
+    starknet.consume_message_from_l2(
+        contract.contract_address,
+        L1_CONTRACT_ADDRESS,
+        [1, L1_ACCOUNT_ADDRESS, 1001000000000000000, 338608066247168814322678008602989124261])
 
 @pytest.mark.asyncio
 async def test_withdraw():
