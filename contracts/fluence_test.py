@@ -132,7 +132,7 @@ async def test_unstake():
     starknet.consume_message_from_l2(
         contract.contract_address,
         L1_CONTRACT_ADDRESS,
-        [1, L1_ACCOUNT_ADDRESS, 1001000000000000000, 338608066247168814322678008602989124261])
+        [1, L1_ACCOUNT_ADDRESS, 1001000450120021001, 338608066247168814322678008602989124261])
 
 @pytest.mark.asyncio
 async def test_withdraw():

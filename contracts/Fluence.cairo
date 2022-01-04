@@ -393,8 +393,7 @@ func unstake{
     assert_nn(stake.timestamp)
 
     let (n_days, _) = unsigned_div_rem(timestamp - stake.timestamp, DAY)
-    let (earnings, _) = unsigned_div_rem(stake.dpy * n_days * stake.amount, 100000000)
-    let amount = stake.amount + earnings
+    let (amount) = calc_compound_interest(n_days, stake.amount, stake.dpy)
     assert_nn(amount)
 
     let (number) = number_of_stakes.read(user=user)
@@ -660,6 +659,23 @@ func hash_inputs{
 
     let (res) = hash_inputs(n - 1, inputs + 1)
     let (res) = hash2{hash_ptr=pedersen_ptr}(inputs[0], res)
+
+    return (result=res)
+end
+
+func calc_compound_interest{
+    range_check_ptr}(
+    n : felt,
+    value : felt,
+    dpy : felt) -> (
+    result : felt):
+
+    if n == 0:
+        return (result=value)
+    end
+
+    let (earnings, _) = unsigned_div_rem(dpy * value, 100000000)
+    let (res) = calc_compound_interest(n - 1, value + earnings, dpy)
 
     return (result=res)
 end
