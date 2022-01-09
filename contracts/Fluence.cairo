@@ -9,11 +9,10 @@ from starkware.cairo.common.signature import verify_ecdsa_signature
 from starkware.starknet.common.messages import send_message_to_l1
 from starkware.starknet.common.syscalls import get_tx_signature
 
-
+const KIND_ETH = 0
 const KIND_ERC20 = 1
 const KIND_ERC721 = 2
 const WITHDRAW = 0
-const UNSTAKE = 1
 
 const ASK = 0
 const BID = 1
@@ -22,7 +21,7 @@ const STATE_NEW = 0
 const STATE_FULFILLED = 1
 const STATE_CANCELLED = 2
 
-const DPY = 10000     # daily percentage yield = 0.01%
+const DPY = 1         # daily percentage yield = 0.01%
 const DAY = 86400000  # miliseconds
 
 struct ContractDescription:
@@ -43,7 +42,9 @@ end
 struct Stake:
     member amount : felt
     member timestamp : felt
-    member dpy : felt
+    member dpy : felt           # daily percentage yield
+    member kind : felt          # ETH / ERC20 / ERC721
+    member token_address : felt
 end
 
 @storage_var
@@ -343,25 +344,38 @@ func deposit{
     return ()
 end
 
-@l1_handler
+@external
 func stake{
     syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    from_address : felt,
     user : felt,
     amount : felt,
-    timestamp : felt):
+    timestamp : felt,
+    kind : felt,
+    token_address : felt):
+    alloc_locals
 
-    let (l1_caddr) = l1_contract_address.read()
-    assert l1_caddr = from_address
+    let inputs : felt* = alloc()
+    inputs[0] = amount
+    inputs[1] = timestamp
+    inputs[2] = kind
+    inputs[3] = token_address
+    verify_inputs_by_signature(user, 4, inputs)
+    local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 
     assert_nn(amount)
 
+    let (bal) = balance.read(user=user, contract=token_address)
+    assert_nn(bal - amount)
+
     let (stakeId) = number_of_stakes.read(user=user)
 
-    staked_balance.write(user, stakeId, Stake(amount, timestamp, DPY))
+    staked_balance.write(user, stakeId, Stake(amount * 1000000000000000000, timestamp, DPY, kind, token_address))
     number_of_stakes.write(user, stakeId + 1)
+
+    balance.write(user, token_address, bal - amount)
 
     return ()
 end
@@ -375,17 +389,16 @@ func unstake{
     user : felt,
     stakeId : felt,
     timestamp : felt,
-    address : felt,
+    token_address : felt,
     nonce : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = stakeId
     inputs[1] = timestamp
-    inputs[2] = address
+    inputs[2] = token_address
     inputs[3] = nonce
     verify_inputs_by_signature(user, 4, inputs)
-
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 
     let (stake) = staked_balance.read(user=user, stakeId=stakeId)
@@ -396,25 +409,19 @@ func unstake{
     let (amount) = calc_compound_interest(n_days, stake.amount, stake.dpy)
     assert_nn(amount)
 
+    let (neto_amount, _) = unsigned_div_rem(amount, 1000000000000000000)
+
     let (number) = number_of_stakes.read(user=user)
     assert_nn(number - 1)
     let (last_stake) = staked_balance.read(user=user, stakeId=number - 1)
 
     # Shuffle last Stake to current position
     staked_balance.write(user, stakeId, last_stake)
-    staked_balance.write(user, number - 1, Stake(0, 0, 0))
+    staked_balance.write(user, number - 1, Stake(0, 0, 0, 0, 0))
     number_of_stakes.write(user, number - 1)
 
-    let (l1_caddr) = l1_contract_address.read()
-    let (payload : felt*) = alloc()
-    assert payload[0] = UNSTAKE
-    assert payload[1] = address
-    assert payload[2] = amount
-    assert payload[3] = nonce
-    send_message_to_l1(
-        to_address=l1_caddr,
-        payload_size=4,
-        payload=payload)
+    let (bal) = balance.read(user=user, contract=token_address)
+    balance.write(user, token_address, bal + neto_amount)
 
     return ()
 end
@@ -674,7 +681,7 @@ func calc_compound_interest{
         return (result=value)
     end
 
-    let (earnings, _) = unsigned_div_rem(dpy * value, 100000000)
+    let (earnings, _) = unsigned_div_rem(dpy * value, 10000)
     let (res) = calc_compound_interest(n - 1, value + earnings, dpy)
 
     return (result=res)

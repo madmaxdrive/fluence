@@ -16,8 +16,6 @@ contract Fluence is IERC721Receiver, ERC2771Context {
     uint256 constant WITHDRAW = 0;
     uint256 constant DEPOSIT = 0xc73f681176fc7b3f9693986fd7b14581e8d540519e27400e88b8713932be01;
     uint256 constant REGISTER_CONTRACT = 0xe3f5e9e1456ffa52a3fbc7e8c296631d4cc2120c0be1e2829301c0d8fa026b;
-    uint256 constant STAKE = 0x3a04795accb4b73d12f13b05a1e0e240cefeb9a89d008676730867a819d2f79;
-    uint256 constant UNSTAKE = 1;
 
     IStarknetCore starknetCore;
     address admin;
@@ -42,27 +40,6 @@ contract Fluence is IERC721Receiver, ERC2771Context {
         payload[1] = uint(tokenType);
         payload[2] = minter;
         starknetCore.sendMessageToL2(toContract, REGISTER_CONTRACT, payload);
-    }
-
-    function stake(uint256 toContract, uint256 user) external payable {
-        uint256[] memory payload = new uint256[](5);
-        payload[0] = user;
-        payload[1] = msg.value;
-        payload[2] = 0;
-        payload[3] = nonce++;
-        payload[4] = uint256(block.timestamp);
-        starknetCore.sendMessageToL2(toContract, DEPOSIT, payload);
-    }
-
-    function unstake(uint256 fromContract, address payable user, uint256 amount, uint256 nonce_) external {
-        uint256[] memory payload = new uint256[](6);
-        payload[0] = UNSTAKE;
-        payload[1] = uint160(_msgSender());
-        payload[2] = amount;
-        payload[5] = nonce_;
-        starknetCore.consumeMessageFromL2(fromContract, payload);
-        
-        user.transfer(amount);
     }
 
     function deposit(uint256 toContract, uint256 user) external payable {
