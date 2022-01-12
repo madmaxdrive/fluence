@@ -9,7 +9,6 @@ from starkware.cairo.common.signature import verify_ecdsa_signature
 from starkware.starknet.common.messages import send_message_to_l1
 from starkware.starknet.common.syscalls import get_tx_signature
 
-const KIND_ETH = 0
 const KIND_ERC20 = 1
 const KIND_ERC721 = 2
 const WITHDRAW = 0
@@ -23,6 +22,7 @@ const STATE_CANCELLED = 2
 
 const DPY = 1         # daily percentage yield = 0.01%
 const DAY = 86400000  # miliseconds
+const DECIMAL_CONTROL = 1000000000000000000 # to enable calculation with decimal numbers 
 
 struct ContractDescription:
     member kind : felt          # ERC20 / ERC721
@@ -43,7 +43,6 @@ struct Stake:
     member amount : felt
     member timestamp : felt
     member dpy : felt           # daily percentage yield
-    member kind : felt          # ETH / ERC20 / ERC721
     member token_address : felt
 end
 
@@ -84,7 +83,7 @@ func staked_balance(user : felt, stakeId : felt) -> (stake : Stake):
 end
 
 @storage_var
-func number_of_stakes(user : felt) -> (number : felt):
+func stake_counter(user : felt) -> (counter : felt):
 end
 
 @constructor
@@ -353,29 +352,26 @@ func stake{
     user : felt,
     amount : felt,
     timestamp : felt,
-    kind : felt,
-    token_address : felt):
+    contract_address : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = amount
     inputs[1] = timestamp
-    inputs[2] = kind
-    inputs[3] = token_address
-    verify_inputs_by_signature(user, 4, inputs)
+    inputs[2] = contract_address
+    verify_inputs_by_signature(user, 3, inputs)
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 
-    assert_nn(amount)
+    # amount that user specified must be positive to avoid exploitation
+    assert_nn(amount) 
 
-    let (bal) = balance.read(user=user, contract=token_address)
+    let (bal) = balance.read(user=user, contract=contract_address)
     assert_nn(bal - amount)
+    balance.write(user, contract_address, bal - amount)
 
-    let (stakeId) = number_of_stakes.read(user=user)
-
-    staked_balance.write(user, stakeId, Stake(amount * 1000000000000000000, timestamp, DPY, kind, token_address))
-    number_of_stakes.write(user, stakeId + 1)
-
-    balance.write(user, token_address, bal - amount)
+    let (stakeId) = stake_counter.read(user=user)
+    staked_balance.write(user, stakeId, Stake(amount * DECIMAL_CONTROL, timestamp, DPY, contract_address))
+    stake_counter.write(user, stakeId + 1)
 
     return ()
 end
@@ -389,39 +385,29 @@ func unstake{
     user : felt,
     stakeId : felt,
     timestamp : felt,
-    token_address : felt,
+    contract_address : felt,
     nonce : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = stakeId
     inputs[1] = timestamp
-    inputs[2] = token_address
+    inputs[2] = contract_address
     inputs[3] = nonce
     verify_inputs_by_signature(user, 4, inputs)
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 
     let (stake) = staked_balance.read(user=user, stakeId=stakeId)
-    assert_nn(stake.amount)
-    assert_nn(stake.timestamp)
+    assert_nn(stake.amount) # check if stake exists
 
     let (n_days, _) = unsigned_div_rem(timestamp - stake.timestamp, DAY)
     let (amount) = calc_compound_interest(n_days, stake.amount, stake.dpy)
-    assert_nn(amount)
+    let (neto_amount, _) = unsigned_div_rem(amount, DECIMAL_CONTROL)
+    let (bal) = balance.read(user=user, contract=contract_address)
+    balance.write(user, contract_address, bal + neto_amount)
 
-    let (neto_amount, _) = unsigned_div_rem(amount, 1000000000000000000)
-
-    let (number) = number_of_stakes.read(user=user)
-    assert_nn(number - 1)
-    let (last_stake) = staked_balance.read(user=user, stakeId=number - 1)
-
-    # Shuffle last Stake to current position
-    staked_balance.write(user, stakeId, last_stake)
-    staked_balance.write(user, number - 1, Stake(0, 0, 0, 0, 0))
-    number_of_stakes.write(user, number - 1)
-
-    let (bal) = balance.read(user=user, contract=token_address)
-    balance.write(user, token_address, bal + neto_amount)
+    # delete stake
+    staked_balance.write(user, stakeId, Stake(0, 0, 0, 0))
 
     return ()
 end
