@@ -40,7 +40,7 @@ async def register_erc20(contract: StarknetContract, starknet: Starknet):
         L1_CONTRACT_ADDRESS,
         contract.contract_address,
         REGISTER_CONTRACT_SELECTOR,
-        [ERC20_CONTRACT_ADDRESS, 1, 0])
+        [ERC20_CONTRACT_ADDRESS, 1, 0, 10])
 
 
 async def register_erc721(contract: StarknetContract, starknet: Starknet):
@@ -48,7 +48,7 @@ async def register_erc721(contract: StarknetContract, starknet: Starknet):
         L1_CONTRACT_ADDRESS,
         contract.contract_address,
         REGISTER_CONTRACT_SELECTOR,
-        [ERC721_CONTRACT_ADDRESS, 2, STARK_KEY2])
+        [ERC721_CONTRACT_ADDRESS, 2, STARK_KEY2, 10])
 
 
 async def deposit_erc20(contract: StarknetContract, starknet: Starknet):
@@ -58,12 +58,38 @@ async def deposit_erc20(contract: StarknetContract, starknet: Starknet):
         DEPOSIT_SELECTOR,
         [STARK_KEY, 5050, ERC20_CONTRACT_ADDRESS, uuid4().int])
 
-async def stake(contract: StarknetContract, starknet: Starknet):
+
+async def deposit_erc721(contract: StarknetContract, starknet: Starknet):
+    await starknet.send_message_to_l2(
+        L1_CONTRACT_ADDRESS,
+        contract.contract_address,
+        DEPOSIT_SELECTOR,
+        [STARK_KEY, 123, ERC721_CONTRACT_ADDRESS, uuid4().int])
+
+
+async def stake_ETH(contract: StarknetContract, starknet: Starknet):
     await starknet.send_message_to_l2(
         L1_CONTRACT_ADDRESS,
         contract.contract_address,
         STAKE_SELECTOR,
-        [STARK_KEY, 5000, 1641150065 * 1000, 0, 0])
+        [STARK_KEY, 1000, 1641150065 * 1000, 0])
+
+
+async def stake_ERC20(contract: StarknetContract, starknet: Starknet):
+    await starknet.send_message_to_l2(
+        L1_CONTRACT_ADDRESS,
+        contract.contract_address,
+        STAKE_SELECTOR,
+        [STARK_KEY, 5000, 1641150065 * 1000, ERC20_CONTRACT_ADDRESS])
+
+
+async def stake_ERC721(contract: StarknetContract, starknet: Starknet):
+    await starknet.send_message_to_l2(
+        L1_CONTRACT_ADDRESS,
+        contract.contract_address,
+        STAKE_SELECTOR,
+        [STARK_KEY, 123, 1641150065 * 1000, ERC721_CONTRACT_ADDRESS])
+
 
 async def mint(contract: StarknetContract):
     await contract. \
@@ -95,8 +121,11 @@ async def create_order() -> (StarknetContract, Starknet):
 async def test_register():
     (contract, starknet) = await deploy()
     await register_erc20(contract, starknet)
+    await register_erc721(contract, starknet)
     exec_info = await contract.describe(ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result == (ContractDescription(1, 0),)
+    exec_info = await contract.describe(ERC721_CONTRACT_ADDRESS).call()
+    assert exec_info.result == (ContractDescription(2, STARK_KEY2),)
 
 
 @pytest.mark.asyncio
@@ -109,54 +138,105 @@ async def test_deposit():
 
 
 @pytest.mark.asyncio
-async def test_stake():
+async def test_stake_erc20():
     (contract, starknet) = await deploy()
     await register_erc20(contract, starknet)
     await deposit_erc20(contract, starknet)
     await contract. \
         stake(user=STARK_KEY,
-                amount=5000,
+                amount_or_token_id=5000,
                 timestamp=1641150565 * 1000,
-                kind=1,
-                token_address=ERC20_CONTRACT_ADDRESS). \
-        invoke(signature=[2709854153257441352965785151266443596653335269788801213608985999303556303141,
-                          2729421245758426911793508723414452802478828693617091095312102548083733222164])
+                contract=ERC20_CONTRACT_ADDRESS). \
+        invoke(signature=[2150344499039921529534117795837367699138305622020065467953725617518185592898,
+                          1548832677834444757690369441754905281209505149132554398678502605363299220961])
 
     exec_info = await contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result[0] == 50
 
     exec_info = await contract.get_staked_balance(STARK_KEY, 0).call()
-    assert exec_info.result[0].amount == 5000
+    assert exec_info.result[0].amount_or_token_id == 5000
 
 
 @pytest.mark.asyncio
-async def test_unstake():
+async def test_stake_erc721():
+    (contract, starknet) = await deploy()
+    await register_erc721(contract, starknet)
+    await deposit_erc721(contract, starknet)
+    await contract. \
+        stake(user=STARK_KEY,
+                amount_or_token_id=123,
+                timestamp=1641150565 * 1000,
+                contract=ERC721_CONTRACT_ADDRESS). \
+        invoke(signature=[2223249446328618097365626663092333839511796705822278719639215444160293322509,
+                          2388758949406197359717664177632373817009674870514818325759810912207791346834])
+
+    exec_info = await contract.get_owner(123, ERC721_CONTRACT_ADDRESS).call()
+    assert exec_info.result[0] == 1
+
+    exec_info = await contract.get_staked_balance(STARK_KEY, 0).call()
+    assert exec_info.result[0].amount_or_token_id == 123
+
+
+@pytest.mark.asyncio
+async def test_unstake_erc20():
     (contract, starknet) = await deploy()
     await register_erc20(contract, starknet)
     await deposit_erc20(contract, starknet)
     await contract. \
         stake(user=STARK_KEY,
-                amount=5000,
+                amount_or_token_id=5000,
                 timestamp=1641150565 * 1000,
-                kind=1,
-                token_address=ERC20_CONTRACT_ADDRESS). \
-        invoke(signature=[2709854153257441352965785151266443596653335269788801213608985999303556303141,
-                          2729421245758426911793508723414452802478828693617091095312102548083733222164])
+                contract=ERC20_CONTRACT_ADDRESS). \
+        invoke(signature=[2150344499039921529534117795837367699138305622020065467953725617518185592898,
+                          1548832677834444757690369441754905281209505149132554398678502605363299220961])
 
     await contract. \
         unstake(user=STARK_KEY,
                 stakeId=0,
                 timestamp=1641150565 * 1000 + 864000000, # 10 days after staking
-                token_address=ERC20_CONTRACT_ADDRESS,
+                contract=ERC20_CONTRACT_ADDRESS,
                 nonce=338608066247168814322678008602989124261). \
         invoke(signature=[375129044222629162302193502926390866368528159517652053038141996645081680815,
                           1610448087618686566693642835500329874204142960911076121425515803752307245325])
 
     exec_info = await contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
-    assert exec_info.result[0] == 5055
+    assert exec_info.result[0] == 5100
 
     exec_info = await contract.get_staked_balance(STARK_KEY, 0).call()
-    assert exec_info.result[0].amount == 0
+    assert exec_info.result[0].amount_or_token_id == 0
+
+
+@pytest.mark.asyncio
+async def test_unstake_erc721():
+    (contract, starknet) = await deploy()
+    await register_erc721(contract, starknet)
+    await deposit_erc721(contract, starknet)
+    await contract. \
+        stake(user=STARK_KEY,
+                amount_or_token_id=123,
+                timestamp=1641150565 * 1000,
+                contract=ERC721_CONTRACT_ADDRESS). \
+        invoke(signature=[2223249446328618097365626663092333839511796705822278719639215444160293322509,
+                          2388758949406197359717664177632373817009674870514818325759810912207791346834])
+
+    await contract. \
+        unstake(user=STARK_KEY,
+                stakeId=0,
+                timestamp=1641150565 * 1000 + 864000000, # 10 days after staking
+                contract=ERC721_CONTRACT_ADDRESS,
+                nonce=338608066247168814322678008602989124261). \
+        invoke(signature=[3390626422206202119583349085301560650175368794813617249074006220238222773755,
+                          1020259351169626932834240701725127940114690212825295519572302999538204030772])
+
+    exec_info = await contract.get_balance(STARK_KEY, 0).call()
+    assert exec_info.result[0] == 100
+
+    exec_info = await contract.get_owner(123, ERC721_CONTRACT_ADDRESS).call()
+    assert exec_info.result[0] == STARK_KEY
+
+    exec_info = await contract.get_staked_balance(STARK_KEY, 0).call()
+    assert exec_info.result[0].amount_or_token_id == 0
+
 
 @pytest.mark.asyncio
 async def test_withdraw():

@@ -40,9 +40,8 @@ struct LimitOrder:
 end
 
 struct Stake:
-    member amount : felt
+    member amount_or_token_id : felt
     member timestamp : felt
-    member dpy : felt           # daily percentage yield
     member token_address : felt
 end
 
@@ -56,6 +55,11 @@ end
 
 @storage_var
 func description(contract : felt) -> (desc : ContractDescription):
+end
+
+# interest for ERC20 / constant daily output for ERC721
+@storage_var
+func interest(contract : felt) -> (interest : felt):
 end
 
 @storage_var
@@ -186,7 +190,8 @@ func register_contract{
     from_address : felt,
     contract : felt,
     kind : felt,
-    mint : felt):
+    mint : felt,
+    _interest : felt):
     assert (kind - KIND_ERC20) * (kind - KIND_ERC721) = 0
 
     let (l1_caddr) = l1_contract_address.read()
@@ -198,6 +203,8 @@ func register_contract{
     description.write(contract, ContractDescription(
         kind=kind,
         mint=mint))
+
+    interest.write(contract, _interest)
 
     return ()
 end
@@ -350,27 +357,35 @@ func stake{
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
     user : felt,
-    amount : felt,
+    amount_or_token_id : felt,
     timestamp : felt,
-    contract_address : felt):
+    contract : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
-    inputs[0] = amount
+    inputs[0] = amount_or_token_id
     inputs[1] = timestamp
-    inputs[2] = contract_address
+    inputs[2] = contract
     verify_inputs_by_signature(user, 3, inputs)
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 
     # amount that user specified must be positive to avoid exploitation
-    assert_nn(amount) 
+    assert_nn(amount_or_token_id) 
 
-    let (bal) = balance.read(user=user, contract=contract_address)
-    assert_nn(bal - amount)
-    balance.write(user, contract_address, bal - amount)
+    let (desc) = description.read(contract=contract)
+    assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
 
     let (stakeId) = stake_counter.read(user=user)
-    staked_balance.write(user, stakeId, Stake(amount * DECIMAL_CONTROL, timestamp, DPY, contract_address))
+    if desc.kind == KIND_ERC721:
+        let (usr) = owner.read(amount_or_token_id, contract)
+        assert usr = user
+        owner.write(amount_or_token_id, contract, 1)
+    else:
+        let (bal) = balance.read(user=user, contract=contract)
+        assert_nn(bal - amount_or_token_id)
+        balance.write(user, contract, bal - amount_or_token_id)
+    end
+    staked_balance.write(user, stakeId, Stake(amount_or_token_id, timestamp, contract))
     stake_counter.write(user, stakeId + 1)
 
     return ()
@@ -385,29 +400,40 @@ func unstake{
     user : felt,
     stakeId : felt,
     timestamp : felt,
-    contract_address : felt,
+    contract : felt,
     nonce : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = stakeId
     inputs[1] = timestamp
-    inputs[2] = contract_address
+    inputs[2] = contract
     inputs[3] = nonce
     verify_inputs_by_signature(user, 4, inputs)
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 
     let (stake) = staked_balance.read(user=user, stakeId=stakeId)
-    assert_nn(stake.amount) # check if stake exists
+    assert_nn(stake.amount_or_token_id) # check if stake exists
+
+    let (desc) = description.read(contract=contract)
+    assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
 
     let (n_days, _) = unsigned_div_rem(timestamp - stake.timestamp, DAY)
-    let (amount) = calc_compound_interest(n_days, stake.amount, stake.dpy)
-    let (neto_amount, _) = unsigned_div_rem(amount, DECIMAL_CONTROL)
-    let (bal) = balance.read(user=user, contract=contract_address)
-    balance.write(user, contract_address, bal + neto_amount)
+    let (_interest) = interest.read(contract=contract)
+    if desc.kind == KIND_ERC721:
+        let neto_amount = n_days * _interest
+        let (bal) = balance.read(user=user, contract=contract)
+        balance.write(user, 0, bal + neto_amount) # payout earnings in eth
+        owner.write(stake.amount_or_token_id, contract, user)
+    else:
+        let (amount) = calc_compound_interest(n_days, stake.amount_or_token_id * DECIMAL_CONTROL, _interest)
+        let (neto_amount, _) = unsigned_div_rem(amount, DECIMAL_CONTROL)
+        let (bal) = balance.read(user=user, contract=contract)
+        balance.write(user, contract, bal + neto_amount)
+    end
 
     # delete stake
-    staked_balance.write(user, stakeId, Stake(0, 0, 0, 0))
+    staked_balance.write(user, stakeId, Stake(0, 0, 0))
 
     return ()
 end
