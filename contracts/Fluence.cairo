@@ -7,7 +7,7 @@ from starkware.cairo.common.hash import hash2
 from starkware.cairo.common.math import assert_nn, assert_not_zero, unsigned_div_rem
 from starkware.cairo.common.signature import verify_ecdsa_signature
 from starkware.starknet.common.messages import send_message_to_l1
-from starkware.starknet.common.syscalls import get_tx_signature
+from starkware.starknet.common.syscalls import (get_tx_signature, get_block_timestamp)
 
 const KIND_ERC20 = 1
 const KIND_ERC721 = 2
@@ -40,9 +40,16 @@ struct LimitOrder:
 end
 
 struct Stake:
+    member user : felt
     member amount_or_token_id : felt
-    member timestamp : felt
-    member token_address : felt
+    member contract : felt
+    member staked_at : felt
+    member unstaked_at : felt
+end
+
+struct Produce:
+    member amount : felt
+    member contract : felt
 end
 
 @storage_var
@@ -59,7 +66,11 @@ end
 
 # interest for ERC20 / constant daily output for ERC721
 @storage_var
-func interest(contract : felt) -> (interest : felt):
+func interest(contract : felt) -> (i : felt):
+end
+
+@storage_var
+func produce(contract : felt) -> (p : Produce):
 end
 
 @storage_var
@@ -83,11 +94,11 @@ func order(id : felt) -> (ord : LimitOrder):
 end
 
 @storage_var
-func staked_balance(user : felt, stakeId : felt) -> (stake : Stake):
+func stake_balance(stakeId : felt) -> (s : Stake):
 end
 
 @storage_var
-func stake_counter(user : felt) -> (counter : felt):
+func stake_counter() -> (counter : felt):
 end
 
 @constructor
@@ -139,14 +150,13 @@ func get_balance{
 end
 
 @view
-func get_staked_balance{
+func get_stake_balance{
     syscall_ptr : felt*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    user : felt,
     stakeId : felt) -> (
     stake : Stake):
-    return staked_balance.read(user=user, stakeId=stakeId)
+    return stake_balance.read(stakeId=stakeId)
 end
 
 @view
@@ -190,8 +200,7 @@ func register_contract{
     from_address : felt,
     contract : felt,
     kind : felt,
-    mint : felt,
-    _interest : felt):
+    mint : felt):
     assert (kind - KIND_ERC20) * (kind - KIND_ERC721) = 0
 
     let (l1_caddr) = l1_contract_address.read()
@@ -203,8 +212,6 @@ func register_contract{
     description.write(contract, ContractDescription(
         kind=kind,
         mint=mint))
-
-    interest.write(contract, _interest)
 
     return ()
 end
@@ -351,6 +358,62 @@ func deposit{
 end
 
 @external
+func set_interest{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    user : felt,
+    contract : felt,
+    _interest : felt,
+    nonce : felt):
+    alloc_locals
+
+    let inputs : felt* = alloc()
+    inputs[0] = contract
+    inputs[1] = _interest
+    inputs[2] = nonce
+    verify_inputs_by_signature(user, 3, inputs)
+    local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
+
+    let (adm) = admin.read()
+    assert user = adm
+
+    interest.write(contract, _interest)
+
+    return ()
+end
+
+@external
+func set_product{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    user : felt,
+    contract : felt,
+    amount : felt,
+    fungible_contract : felt,
+    nonce : felt):
+    alloc_locals
+
+    let inputs : felt* = alloc()
+    inputs[0] = contract
+    inputs[1] = amount
+    inputs[2] = fungible_contract
+    inputs[3] = nonce
+    verify_inputs_by_signature(user, 4, inputs)
+    local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
+
+    let (adm) = admin.read()
+    assert user = adm
+
+    produce.write(contract, Produce(amount, fungible_contract))
+
+    return ()
+end
+
+@external
 func stake{
     syscall_ptr : felt*,
     ecdsa_ptr : SignatureBuiltin*,
@@ -358,15 +421,13 @@ func stake{
     range_check_ptr}(
     user : felt,
     amount_or_token_id : felt,
-    timestamp : felt,
     contract : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = amount_or_token_id
-    inputs[1] = timestamp
-    inputs[2] = contract
-    verify_inputs_by_signature(user, 3, inputs)
+    inputs[1] = contract
+    verify_inputs_by_signature(user, 2, inputs)
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 
     # amount that user specified must be positive to avoid exploitation
@@ -375,7 +436,7 @@ func stake{
     let (desc) = description.read(contract=contract)
     assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
 
-    let (stakeId) = stake_counter.read(user=user)
+    let (stakeId) = stake_counter.read()
     if desc.kind == KIND_ERC721:
         let (usr) = owner.read(amount_or_token_id, contract)
         assert usr = user
@@ -385,8 +446,9 @@ func stake{
         assert_nn(bal - amount_or_token_id)
         balance.write(user, contract, bal - amount_or_token_id)
     end
-    staked_balance.write(user, stakeId, Stake(amount_or_token_id, timestamp, contract))
-    stake_counter.write(user, stakeId + 1)
+    let (timestamp) = get_block_timestamp()
+    stake_balance.write(stakeId, Stake(user, amount_or_token_id, contract, timestamp, 0))
+    stake_counter.write(stakeId + 1)
 
     return ()
 end
@@ -399,41 +461,44 @@ func unstake{
     range_check_ptr}(
     user : felt,
     stakeId : felt,
-    timestamp : felt,
-    contract : felt,
     nonce : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = stakeId
-    inputs[1] = timestamp
-    inputs[2] = contract
-    inputs[3] = nonce
-    verify_inputs_by_signature(user, 4, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(user, 2, inputs)
     local ecdsa_ptr : SignatureBuiltin* = ecdsa_ptr
 
-    let (stake) = staked_balance.read(user=user, stakeId=stakeId)
+    let (stake) = stake_balance.read(stakeId=stakeId)
     assert_nn(stake.amount_or_token_id) # check if stake exists
+    assert user = stake.user
 
-    let (desc) = description.read(contract=contract)
+    let (desc) = description.read(contract=stake.contract)
     assert (desc.kind - KIND_ERC20) * (desc.kind - KIND_ERC721) = 0
 
-    let (n_days, _) = unsigned_div_rem(timestamp - stake.timestamp, DAY)
-    let (_interest) = interest.read(contract=contract)
+    let (timestamp) = get_block_timestamp()
+    let (n_days, _) = unsigned_div_rem(timestamp - stake.staked_at, DAY)
     if desc.kind == KIND_ERC721:
-        let neto_amount = n_days * _interest
-        let (bal) = balance.read(user=user, contract=contract)
-        balance.write(user, 0, bal + neto_amount) # payout earnings in eth
-        owner.write(stake.amount_or_token_id, contract, user)
+        let (_produce) = produce.read(contract=stake.contract)
+        let neto_amount = n_days * _produce.amount
+        let (bal) = balance.read(user=user, contract=_produce.contract)
+        balance.write(user, _produce.contract, bal + neto_amount)
+        owner.write(stake.amount_or_token_id, stake.contract, user)
     else:
+        let (_interest) = interest.read(contract=stake.contract)
         let (amount) = calc_compound_interest(n_days, stake.amount_or_token_id * DECIMAL_CONTROL, _interest)
         let (neto_amount, _) = unsigned_div_rem(amount, DECIMAL_CONTROL)
-        let (bal) = balance.read(user=user, contract=contract)
-        balance.write(user, contract, bal + neto_amount)
+        let (bal) = balance.read(user=user, contract=stake.contract)
+        balance.write(user, stake.contract, bal + neto_amount)
     end
 
-    # delete stake
-    staked_balance.write(user, stakeId, Stake(0, 0, 0))
+    stake_balance.write(stakeId,
+        Stake(stake.user,
+            stake.amount_or_token_id,
+            stake.contract,
+            stake.staked_at,
+            timestamp))
 
     return ()
 end
