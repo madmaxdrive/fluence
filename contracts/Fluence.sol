@@ -28,7 +28,7 @@ contract Fluence is IERC721Receiver, ERC2771Context {
         admin = msg.sender;
     }
 
-    function registerContract(uint256 toContract, address tokenContract, TokenType tokenType, uint256 minter) external {
+    function registerContract(uint256 toContract, address tokenContract, TokenType tokenType, uint256 minter, uint256 interest) external {
         require(admin == _msgSender(), "Unauthorized.");
         require(tokenType == TokenType.ERC20 || tokenType == TokenType.ERC721, "Bad token type.");
         require(contracts[tokenContract] == TokenType.Z, "Registered contract.");
@@ -39,6 +39,7 @@ contract Fluence is IERC721Receiver, ERC2771Context {
         payload[0] = uint160(tokenContract);
         payload[1] = uint(tokenType);
         payload[2] = minter;
+        payload[3] = interest;
         starknetCore.sendMessageToL2(toContract, REGISTER_CONTRACT, payload);
     }
 
