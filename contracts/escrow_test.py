@@ -82,14 +82,14 @@ async def create_escrow() -> (StarknetContract, Starknet):
     await deposit_erc20(fluence_contract, starknet, STARK_KEY2)
     set_block_timestamp(starknet.state, 2)
     await escrow_contract. \
-        transfer_to_escrow(escrow_id=1,
-                     sender_address=STARK_KEY,
-                     sender_amount_or_token_id=50,
-                     sender_contract=ERC20_CONTRACT_ADDRESS,
-                     recipient_address=STARK_KEY2,
-                     recipient_amount_or_token_id=100,
-                     recipient_contract=ERC20_CONTRACT_ADDRESS,
-                     time_limit=5). \
+        create_escrow(escrow_id=1,
+                     client_address=STARK_KEY,
+                     client_amount_or_token_id=50,
+                     client_contract=ERC20_CONTRACT_ADDRESS,
+                     vendor_address=STARK_KEY2,
+                     vendor_amount_or_token_id=100,
+                     vendor_contract=ERC20_CONTRACT_ADDRESS,
+                     expire_at=5). \
         invoke(signature=sign_stark_inputs(1234567, ['1', '50', '0x4A26C7daCcC90434693de4b8bede3151884cab89', str(private_to_stark_key(7654321)), '100', '0x4A26C7daCcC90434693de4b8bede3151884cab89', '5']))
 
     return fluence_contract, escrow_contract, starknet
@@ -97,30 +97,17 @@ async def create_escrow() -> (StarknetContract, Starknet):
 @pytest.mark.asyncio
 async def test_successful_escrow():
     fluence_contract, escrow_contract, starknet = await create_escrow()
-    set_block_timestamp(starknet.state, 3)
 
-    await escrow_contract. \
-    transfer_to_escrow(escrow_id=1,
-                    sender_address=STARK_KEY2,
-                    sender_amount_or_token_id=100,
-                    sender_contract=ERC20_CONTRACT_ADDRESS,
-                    recipient_address=STARK_KEY,
-                    recipient_amount_or_token_id=50,
-                    recipient_contract=ERC20_CONTRACT_ADDRESS,
-                    time_limit=5). \
-    invoke(signature=sign_stark_inputs(7654321, ['1', '100', '0x4A26C7daCcC90434693de4b8bede3151884cab89', str(private_to_stark_key(1234567)), '50', '0x4A26C7daCcC90434693de4b8bede3151884cab89', '5']))
+    set_block_timestamp(starknet.state, 3)
+    await escrow_contract.fulfill_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
 
     set_block_timestamp(starknet.state, 4)
-    await escrow_contract. \
-    client_commit_escrow(escrow_id=1,
-                    sender_address=STARK_KEY). \
-    invoke(signature=sign_stark_inputs(1234567, ['1']))
+    await escrow_contract.client_commit_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(1234567, ['1']))
 
     exec_info = await escrow_contract.get_escrow(1).call()
-    assert exec_info.result[0].time_created == 2
-    assert exec_info.result[0].time_fulfilled == 3
-    assert exec_info.result[0].time_canceled == 0
-    assert exec_info.result[0].time_ended == 4
+    assert exec_info.result[0].fulfilled_at == 3
+    assert exec_info.result[0].canceled_at == 0
+    assert exec_info.result[0].ended_at == 4
     
     exec_info = await fluence_contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result[0] == 5050
@@ -131,18 +118,14 @@ async def test_successful_escrow():
 @pytest.mark.asyncio
 async def test_early_cancelation():
     fluence_contract, escrow_contract, starknet = await create_escrow()
-    set_block_timestamp(starknet.state, 3)
 
-    await escrow_contract. \
-    cancel_escrow(escrow_id=1,
-                sender_address=STARK_KEY). \
-    invoke(signature=sign_stark_inputs(1234567, ['1']))
+    set_block_timestamp(starknet.state, 3)
+    await escrow_contract.cancel_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(1234567, ['1']))
 
     exec_info = await escrow_contract.get_escrow(1).call()
-    assert exec_info.result[0].time_created == 2
-    assert exec_info.result[0].time_fulfilled == 0
-    assert exec_info.result[0].time_canceled == 3
-    assert exec_info.result[0].time_ended == 3
+    assert exec_info.result[0].fulfilled_at == 0
+    assert exec_info.result[0].canceled_at == 3
+    assert exec_info.result[0].ended_at == 3
     
     exec_info = await fluence_contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result[0] == 5000
@@ -153,38 +136,20 @@ async def test_early_cancelation():
 @pytest.mark.asyncio
 async def test_approved_cancelation():
     fluence_contract, escrow_contract, starknet = await create_escrow()
-    set_block_timestamp(starknet.state, 3)
 
-    await escrow_contract. \
-    transfer_to_escrow(escrow_id=1,
-                    sender_address=STARK_KEY2,
-                    sender_amount_or_token_id=100,
-                    sender_contract=ERC20_CONTRACT_ADDRESS,
-                    recipient_address=STARK_KEY,
-                    recipient_amount_or_token_id=50,
-                    recipient_contract=ERC20_CONTRACT_ADDRESS,
-                    time_limit=5). \
-    invoke(signature=sign_stark_inputs(7654321, ['1', '100', '0x4A26C7daCcC90434693de4b8bede3151884cab89', str(private_to_stark_key(1234567)), '50', '0x4A26C7daCcC90434693de4b8bede3151884cab89', '5']))
+    set_block_timestamp(starknet.state, 3)
+    await escrow_contract.fulfill_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
 
     set_block_timestamp(starknet.state, 4)
-
-    await escrow_contract. \
-    cancel_escrow(escrow_id=1,
-                sender_address=STARK_KEY). \
-    invoke(signature=sign_stark_inputs(1234567, ['1']))
+    await escrow_contract.cancel_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(1234567, ['1']))
 
     set_block_timestamp(starknet.state, 5)
-
-    await escrow_contract. \
-    approve_cancelation_request(escrow_id=1,
-                    sender_address=STARK_KEY2). \
-    invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.approve_cancelation_request(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
 
     exec_info = await escrow_contract.get_escrow(1).call()
-    assert exec_info.result[0].time_created == 2
-    assert exec_info.result[0].time_fulfilled == 3
-    assert exec_info.result[0].time_canceled == 4
-    assert exec_info.result[0].time_ended == 5
+    assert exec_info.result[0].fulfilled_at == 3
+    assert exec_info.result[0].canceled_at == 4
+    assert exec_info.result[0].ended_at == 5
     
     exec_info = await fluence_contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result[0] == 5000
@@ -194,38 +159,20 @@ async def test_approved_cancelation():
 @pytest.mark.asyncio
 async def test_declined_cancelation():
     fluence_contract, escrow_contract, starknet = await create_escrow()
-    set_block_timestamp(starknet.state, 3)
 
-    await escrow_contract. \
-    transfer_to_escrow(escrow_id=1,
-                    sender_address=STARK_KEY2,
-                    sender_amount_or_token_id=100,
-                    sender_contract=ERC20_CONTRACT_ADDRESS,
-                    recipient_address=STARK_KEY,
-                    recipient_amount_or_token_id=50,
-                    recipient_contract=ERC20_CONTRACT_ADDRESS,
-                    time_limit=5). \
-    invoke(signature=sign_stark_inputs(7654321, ['1', '100', '0x4A26C7daCcC90434693de4b8bede3151884cab89', str(private_to_stark_key(1234567)), '50', '0x4A26C7daCcC90434693de4b8bede3151884cab89', '5']))
+    set_block_timestamp(starknet.state, 3)
+    await escrow_contract.fulfill_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
 
     set_block_timestamp(starknet.state, 4)
-
-    await escrow_contract. \
-    cancel_escrow(escrow_id=1,
-                sender_address=STARK_KEY). \
-    invoke(signature=sign_stark_inputs(1234567, ['1']))
+    await escrow_contract.cancel_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(1234567, ['1']))
 
     set_block_timestamp(starknet.state, 5)
-
-    await escrow_contract. \
-    decline_cancelation_request(escrow_id=1,
-                    sender_address=STARK_KEY2). \
-    invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.decline_cancelation_request(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
 
     exec_info = await escrow_contract.get_escrow(1).call()
-    assert exec_info.result[0].time_created == 2
-    assert exec_info.result[0].time_fulfilled == 3
-    assert exec_info.result[0].time_canceled == 4
-    assert exec_info.result[0].time_ended == 5
+    assert exec_info.result[0].fulfilled_at == 3
+    assert exec_info.result[0].canceled_at == 4
+    assert exec_info.result[0].ended_at == 5
     
     exec_info = await fluence_contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result[0] == 5050
@@ -236,31 +183,17 @@ async def test_declined_cancelation():
 @pytest.mark.asyncio
 async def test_vendor_deadline_commit():
     fluence_contract, escrow_contract, starknet = await create_escrow()
+
     set_block_timestamp(starknet.state, 3)
+    await escrow_contract.fulfill_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
 
-    await escrow_contract. \
-    transfer_to_escrow(escrow_id=1,
-                    sender_address=STARK_KEY2,
-                    sender_amount_or_token_id=100,
-                    sender_contract=ERC20_CONTRACT_ADDRESS,
-                    recipient_address=STARK_KEY,
-                    recipient_amount_or_token_id=50,
-                    recipient_contract=ERC20_CONTRACT_ADDRESS,
-                    time_limit=5). \
-    invoke(signature=sign_stark_inputs(7654321, ['1', '100', '0x4A26C7daCcC90434693de4b8bede3151884cab89', str(private_to_stark_key(1234567)), '50', '0x4A26C7daCcC90434693de4b8bede3151884cab89', '5']))
-
-    set_block_timestamp(starknet.state, 6)
-
-    await escrow_contract. \
-    vendor_commit_escrow(escrow_id=1,
-                sender_address=STARK_KEY2). \
-    invoke(signature=sign_stark_inputs(7654321, ['1']))
+    set_block_timestamp(starknet.state, 9)
+    await escrow_contract.vendor_commit_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
 
     exec_info = await escrow_contract.get_escrow(1).call()
-    assert exec_info.result[0].time_created == 2
-    assert exec_info.result[0].time_fulfilled == 3
-    assert exec_info.result[0].time_canceled == 0
-    assert exec_info.result[0].time_ended == 6
+    assert exec_info.result[0].fulfilled_at == 3
+    assert exec_info.result[0].canceled_at == 0
+    assert exec_info.result[0].ended_at == 9
     
     exec_info = await fluence_contract.get_balance(STARK_KEY, ERC20_CONTRACT_ADDRESS).call()
     assert exec_info.result[0] == 5050

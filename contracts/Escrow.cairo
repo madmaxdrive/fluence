@@ -8,19 +8,19 @@ from starkware.cairo.common.math import assert_nn, assert_not_zero
 from starkware.cairo.common.signature import verify_ecdsa_signature
 from starkware.starknet.common.syscalls import get_tx_signature, get_contract_address, get_block_timestamp
 
+struct Asset:
+    member amount_or_token_id : felt
+    member contract : felt
+    member owner : felt
+end
+
 struct Escrow:
-    member escrow_id : felt
-    member client_address : felt
-    member client_amount_or_token_id : felt
-    member client_contract : felt
-    member vendor_address : felt
-    member vendor_amount_or_token_id : felt
-    member vendor_contract : felt
-    member time_limit : felt
-    member time_created : felt
-    member time_fulfilled : felt
-    member time_canceled : felt
-    member time_ended : felt
+    member client_asset : Asset
+    member vendor_asset : Asset
+    member expire_at : felt
+    member fulfilled_at : felt
+    member canceled_at : felt
+    member ended_at : felt
 end
 
 @contract_interface
@@ -75,80 +75,87 @@ func get_escrow{
 end
 
 @external
-func transfer_to_escrow{
+func create_escrow{
     syscall_ptr : felt*,
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
     escrow_id : felt,
-    sender_address : felt,
-    sender_amount_or_token_id : felt,
-    sender_contract : felt,
-    recipient_address : felt,
-    recipient_amount_or_token_id : felt,
-    recipient_contract : felt,
-    time_limit : felt):
+    client_address : felt,
+    client_amount_or_token_id : felt,
+    client_contract : felt,
+    vendor_address : felt,
+    vendor_amount_or_token_id : felt,
+    vendor_contract : felt,
+    expire_at : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    inputs[1] = sender_amount_or_token_id
-    inputs[2] = sender_contract
-    inputs[3] = recipient_address
-    inputs[4] = recipient_amount_or_token_id
-    inputs[5] = recipient_contract
-    inputs[6] = time_limit
-    verify_inputs_by_signature(sender_address, 7, inputs)
+    inputs[1] = client_amount_or_token_id
+    inputs[2] = client_contract
+    inputs[3] = vendor_address
+    inputs[4] = vendor_amount_or_token_id
+    inputs[5] = vendor_contract
+    inputs[6] = expire_at
+    verify_inputs_by_signature(client_address, 7, inputs)
 
-    assert_nn(sender_amount_or_token_id)
-    assert_nn(recipient_amount_or_token_id)
+    assert_nn(client_amount_or_token_id)
+    assert_nn(vendor_amount_or_token_id)
+
+    let (esc) = escrows.read(escrow_id)
+    assert esc.client_asset.owner = 0
 
     let (fluence) = fluence_address.read()
-    let (esc) = escrows.read(escrow_id)
-    let (timestamp) = get_block_timestamp()
     let (addr) = get_contract_address()
 
-    if esc.client_address == 0:
-        # CREATE NEW ESCROW
-        escrows.write(escrow_id, Escrow(escrow_id,
-                        sender_address,
-                        sender_amount_or_token_id,
-                        sender_contract,
-                        recipient_address,
-                        recipient_amount_or_token_id,
-                        recipient_contract,
-                        time_limit,
-                        timestamp,
-                        0,
-                        0,
-                        0))
-    else:
-        # FULFILL EXISTING ESCROW
-        assert esc.client_address = recipient_address
-        assert esc.client_amount_or_token_id = recipient_amount_or_token_id
-        assert esc.client_contract = recipient_contract
-        assert esc.time_ended = 0
-        assert_not_zero(esc.time_created)
-        assert_nn(esc.time_created + esc.time_limit - timestamp)
+    escrows.write(escrow_id, Escrow(
+        Asset(client_amount_or_token_id, client_contract, client_address),
+        Asset(vendor_amount_or_token_id, vendor_contract, vendor_address),
+        expire_at, 0, 0, 0))
 
-        escrows.write(escrow_id, Escrow(esc.escrow_id,
-                        esc.client_address,
-                        esc.client_amount_or_token_id,
-                        esc.client_contract,
-                        esc.vendor_address,
-                        esc.vendor_amount_or_token_id,
-                        esc.vendor_contract,
-                        esc.time_limit,
-                        esc.time_created,
-                        timestamp,
-                        esc.time_canceled,
-                        esc.time_ended))
-    end
-
-    IFluence.escrow_transfer(contract_address=fluence, from_=sender_address, to_=addr, amount_or_token_id=sender_amount_or_token_id, contract=sender_contract)
+    IFluence.escrow_transfer(contract_address=fluence, from_=client_address, to_=addr, amount_or_token_id=client_amount_or_token_id, contract=client_contract)
 
     return ()
 end
+
+
+@external
+func fulfill_escrow{
+    syscall_ptr : felt*,
+    ecdsa_ptr : SignatureBuiltin*,
+    pedersen_ptr : HashBuiltin*,
+    range_check_ptr}(
+    escrow_id : felt):
+    alloc_locals
+
+    let (esc) = escrows.read(escrow_id)
+
+    let inputs : felt* = alloc()
+    inputs[0] = escrow_id
+    verify_inputs_by_signature(esc.vendor_asset.owner, 1, inputs)
+
+    let (fluence) = fluence_address.read()
+    let (timestamp) = get_block_timestamp()
+    let (addr) = get_contract_address()
+
+    assert_not_zero(esc.client_asset.owner)
+    assert_nn(esc.expire_at - timestamp)
+    assert esc.fulfilled_at = 0
+    assert esc.ended_at = 0
+
+    escrows.write(escrow_id, Escrow(esc.client_asset,
+                    esc.vendor_asset,
+                    esc.expire_at,
+                    timestamp,
+                    esc.canceled_at,
+                    esc.ended_at))
+
+    IFluence.escrow_transfer(contract_address=fluence, from_=esc.vendor_asset.owner, to_=addr, amount_or_token_id=esc.vendor_asset.amount_or_token_id, contract=esc.vendor_asset.contract)
+
+    return ()
+end
+
 
 @external
 func cancel_escrow{
@@ -156,51 +163,38 @@ func cancel_escrow{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt,
-    sender_address : felt):
+    escrow_id : felt):
     alloc_locals
+
+    let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(sender_address, 1, inputs)
+    verify_inputs_by_signature(esc.client_asset.owner, 1, inputs)
 
-    let (esc) = escrows.read(escrow_id)
-    assert sender_address = esc.client_address
-    assert esc.time_ended = 0
-    assert esc.time_canceled = 0
-    assert_not_zero(esc.time_created)
+    assert_not_zero(esc.client_asset.owner)
+    assert esc.canceled_at = 0
+    assert esc.ended_at = 0
 
     let (fluence) = fluence_address.read()
     let (timestamp) = get_block_timestamp()
 
-    if esc.time_fulfilled == 0:
+    if esc.fulfilled_at == 0:
         let (addr) = get_contract_address()
-        IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.client_address, amount_or_token_id=esc.client_amount_or_token_id, contract=esc.client_contract)
-        escrows.write(escrow_id, Escrow(esc.escrow_id,
-                    esc.client_address,
-                    esc.client_amount_or_token_id,
-                    esc.client_contract,
-                    esc.vendor_address,
-                    esc.vendor_amount_or_token_id,
-                    esc.vendor_contract,
-                    esc.time_limit,
-                    esc.time_created,
-                    esc.time_fulfilled,
+        IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.client_asset.owner, amount_or_token_id=esc.client_asset.amount_or_token_id, contract=esc.client_asset.contract)
+        escrows.write(escrow_id, Escrow(esc.client_asset,
+                    esc.vendor_asset,
+                    esc.expire_at,
+                    esc.fulfilled_at,
                     timestamp,
                     timestamp))
     else:
-        escrows.write(escrow_id, Escrow(esc.escrow_id,
-                    esc.client_address,
-                    esc.client_amount_or_token_id,
-                    esc.client_contract,
-                    esc.vendor_address,
-                    esc.vendor_amount_or_token_id,
-                    esc.vendor_contract,
-                    esc.time_limit,
-                    esc.time_created,
-                    esc.time_fulfilled,
+        escrows.write(escrow_id, Escrow(esc.client_asset,
+                    esc.vendor_asset,
+                    esc.expire_at,
+                    esc.fulfilled_at,
                     timestamp,
-                    esc.time_ended))
+                    esc.ended_at))
     end
 
     return ()
@@ -212,40 +206,32 @@ func approve_cancelation_request{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt,
-    sender_address : felt):
+    escrow_id : felt):
     alloc_locals
+
+    let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(sender_address, 1, inputs)
+    verify_inputs_by_signature(esc.vendor_asset.owner, 1, inputs)
 
-    let (esc) = escrows.read(escrow_id)
-    assert sender_address = esc.vendor_address
-    assert esc.time_ended = 0
-    assert_not_zero(esc.time_created)
-    assert_not_zero(esc.time_fulfilled)
-    assert_not_zero(esc.time_canceled)
+    assert_not_zero(esc.fulfilled_at)
+    assert_not_zero(esc.canceled_at)
+    assert esc.ended_at = 0
 
     let (fluence) = fluence_address.read()
     let (timestamp) = get_block_timestamp()
     let (addr) = get_contract_address()
 
-    escrows.write(escrow_id, Escrow(esc.escrow_id,
-                    esc.client_address,
-                    esc.client_amount_or_token_id,
-                    esc.client_contract,
-                    esc.vendor_address,
-                    esc.vendor_amount_or_token_id,
-                    esc.vendor_contract,
-                    esc.time_limit,
-                    esc.time_created,
-                    esc.time_fulfilled,
-                    esc.time_canceled,
+    escrows.write(escrow_id, Escrow(esc.client_asset,
+                    esc.vendor_asset,
+                    esc.expire_at,
+                    esc.fulfilled_at,
+                    esc.canceled_at,
                     timestamp))
                     
-    IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.client_address, amount_or_token_id=esc.client_amount_or_token_id, contract=esc.client_contract)
-    IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.vendor_address, amount_or_token_id=esc.vendor_amount_or_token_id, contract=esc.vendor_contract)
+    IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.client_asset.owner, amount_or_token_id=esc.client_asset.amount_or_token_id, contract=esc.client_asset.contract)
+    IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.vendor_asset.owner, amount_or_token_id=esc.vendor_asset.amount_or_token_id, contract=esc.vendor_asset.contract)
     
     return ()
 end
@@ -256,20 +242,18 @@ func decline_cancelation_request{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt,
-    sender_address : felt):
+    escrow_id : felt):
     alloc_locals
+
+    let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(sender_address, 1, inputs)
+    verify_inputs_by_signature(esc.vendor_asset.owner, 1, inputs)
 
-    let (esc) = escrows.read(escrow_id)
-    assert sender_address = esc.vendor_address
-    assert esc.time_ended = 0
-    assert_not_zero(esc.time_created)
-    assert_not_zero(esc.time_fulfilled)
-    assert_not_zero(esc.time_canceled)
+    assert_not_zero(esc.fulfilled_at)
+    assert_not_zero(esc.canceled_at)
+    assert esc.ended_at = 0
 
     commit_escrow(escrow_id, esc)
 
@@ -282,20 +266,18 @@ func client_commit_escrow{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt,
-    sender_address : felt):
+    escrow_id : felt):
     alloc_locals
+
+    let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(sender_address, 1, inputs)
+    verify_inputs_by_signature(esc.client_asset.owner, 1, inputs)
 
-    let (esc) = escrows.read(escrow_id)
-    assert esc.client_address = sender_address
-    assert esc.time_ended = 0
-    assert esc.time_canceled = 0
-    assert_not_zero(esc.time_created)
-    assert_not_zero(esc.time_fulfilled)
+    assert_not_zero(esc.fulfilled_at)
+    assert esc.canceled_at = 0
+    assert esc.ended_at = 0
 
     commit_escrow(escrow_id, esc)
 
@@ -308,23 +290,22 @@ func vendor_commit_escrow{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt,
-    sender_address : felt):
+    escrow_id : felt):
     alloc_locals
+
+    let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(sender_address, 1, inputs)
+    verify_inputs_by_signature(esc.vendor_asset.owner, 1, inputs)
+
+    assert_not_zero(esc.fulfilled_at)
+    assert esc.canceled_at = 0
+    assert esc.ended_at = 0
 
     let (timestamp) = get_block_timestamp()
     let (deadline) = auto_commit_deadline.read()
-    let (esc) = escrows.read(escrow_id)
-    assert esc.vendor_address = sender_address
-    assert esc.time_ended = 0
-    assert esc.time_canceled = 0
-    assert_not_zero(esc.time_created)
-    assert_not_zero(esc.time_fulfilled)
-    assert_nn(timestamp - esc.time_fulfilled + deadline)
+    assert_nn(timestamp - esc.fulfilled_at + deadline)
 
     commit_escrow(escrow_id, esc)
 
@@ -342,21 +323,15 @@ func commit_escrow{
     let (timestamp) = get_block_timestamp()
     let (fluence) = fluence_address.read()
     let (addr) = get_contract_address()
-    escrows.write(escrow_id, Escrow(esc.escrow_id,
-                        esc.client_address,
-                        esc.client_amount_or_token_id,
-                        esc.client_contract,
-                        esc.vendor_address,
-                        esc.vendor_amount_or_token_id,
-                        esc.vendor_contract,
-                        esc.time_limit,
-                        esc.time_created,
-                        esc.time_fulfilled,
-                        esc.time_canceled,
+    escrows.write(escrow_id, Escrow(esc.client_asset,
+                        esc.vendor_asset,
+                        esc.expire_at,
+                        esc.fulfilled_at,
+                        esc.canceled_at,
                         timestamp))
 
-    IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.client_address, amount_or_token_id=esc.vendor_amount_or_token_id, contract=esc.vendor_contract)
-    IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.vendor_address, amount_or_token_id=esc.client_amount_or_token_id, contract=esc.client_contract)
+    IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.client_asset.owner, amount_or_token_id=esc.vendor_asset.amount_or_token_id, contract=esc.vendor_asset.contract)
+    IFluence.escrow_transfer(contract_address=fluence, from_=addr, to_=esc.vendor_asset.owner, amount_or_token_id=esc.client_asset.amount_or_token_id, contract=esc.client_asset.contract)
 
     return ()
 end
