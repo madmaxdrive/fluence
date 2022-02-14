@@ -102,6 +102,7 @@ func create_escrow{
 
     assert_nn(client_amount_or_token_id)
     assert_nn(vendor_amount_or_token_id)
+    assert_nn(expire_at)
 
     let (esc) = escrows.read(escrow_id)
     assert esc.client_asset.owner = 0
