@@ -87,7 +87,8 @@ func create_escrow{
     vendor_address : felt,
     vendor_amount_or_token_id : felt,
     vendor_contract : felt,
-    expire_at : felt):
+    expire_at : felt,
+    nonce : felt):
     alloc_locals
 
     let inputs : felt* = alloc()
@@ -98,7 +99,8 @@ func create_escrow{
     inputs[4] = vendor_amount_or_token_id
     inputs[5] = vendor_contract
     inputs[6] = expire_at
-    verify_inputs_by_signature(client_address, 7, inputs)
+    inputs[7] = nonce
+    verify_inputs_by_signature(client_address, 8, inputs)
 
     assert_nn(client_amount_or_token_id)
     assert_nn(vendor_amount_or_token_id)
@@ -127,14 +129,16 @@ func fulfill_escrow{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt):
+    escrow_id : felt,
+    nonce : felt):
     alloc_locals
 
     let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(esc.vendor_asset.owner, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(esc.vendor_asset.owner, 2, inputs)
 
     let (fluence) = fluence_address.read()
     let (timestamp) = get_block_timestamp()
@@ -164,14 +168,16 @@ func cancel_escrow{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt):
+    escrow_id : felt,
+    nonce : felt):
     alloc_locals
 
     let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(esc.client_asset.owner, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(esc.client_asset.owner, 2, inputs)
 
     assert_not_zero(esc.client_asset.owner)
     assert esc.canceled_at = 0
@@ -207,14 +213,16 @@ func approve_cancelation_request{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt):
+    escrow_id : felt,
+    nonce : felt):
     alloc_locals
 
     let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(esc.vendor_asset.owner, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(esc.vendor_asset.owner, 2, inputs)
 
     assert_not_zero(esc.fulfilled_at)
     assert_not_zero(esc.canceled_at)
@@ -243,14 +251,16 @@ func decline_cancelation_request{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt):
+    escrow_id : felt,
+    nonce : felt):
     alloc_locals
 
     let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(esc.vendor_asset.owner, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(esc.vendor_asset.owner, 2, inputs)
 
     assert_not_zero(esc.fulfilled_at)
     assert_not_zero(esc.canceled_at)
@@ -267,14 +277,16 @@ func client_commit_escrow{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt):
+    escrow_id : felt,
+    nonce : felt):
     alloc_locals
 
     let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(esc.client_asset.owner, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(esc.client_asset.owner, 2, inputs)
 
     assert_not_zero(esc.fulfilled_at)
     assert esc.canceled_at = 0
@@ -291,14 +303,16 @@ func vendor_commit_escrow{
     ecdsa_ptr : SignatureBuiltin*,
     pedersen_ptr : HashBuiltin*,
     range_check_ptr}(
-    escrow_id : felt):
+    escrow_id : felt,
+    nonce : felt):
     alloc_locals
 
     let (esc) = escrows.read(escrow_id)
 
     let inputs : felt* = alloc()
     inputs[0] = escrow_id
-    verify_inputs_by_signature(esc.vendor_asset.owner, 1, inputs)
+    inputs[1] = nonce
+    verify_inputs_by_signature(esc.vendor_asset.owner, 2, inputs)
 
     assert_not_zero(esc.fulfilled_at)
     assert esc.canceled_at = 0
@@ -306,7 +320,7 @@ func vendor_commit_escrow{
 
     let (timestamp) = get_block_timestamp()
     let (deadline) = auto_commit_deadline.read()
-    assert_nn(timestamp - esc.fulfilled_at + deadline)
+    assert_nn(timestamp - (esc.fulfilled_at + deadline))
 
     commit_escrow(escrow_id, esc)
 

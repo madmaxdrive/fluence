@@ -23,6 +23,7 @@ ERC20_CONTRACT_ADDRESS = 0x4A26C7daCcC90434693de4b8bede3151884cab89
 ERC721_CONTRACT_ADDRESS = 0xfAfC4Ec8ca3Eb374fbde6e9851134816Aada912a
 STARK_KEY = private_to_stark_key(1234567)
 STARK_KEY2 = private_to_stark_key(7654321)
+DEFAULT_NONCE = 173273242714120071103187695001323147281
 
 ContractDescription = namedtuple('ContractDescription', [
     'kind', 'mint'])
@@ -89,8 +90,9 @@ async def create_escrow() -> (StarknetContract, Starknet):
                      vendor_address=STARK_KEY2,
                      vendor_amount_or_token_id=100,
                      vendor_contract=ERC20_CONTRACT_ADDRESS,
-                     expire_at=5). \
-        invoke(signature=sign_stark_inputs(1234567, ['1', '50', '0x4A26C7daCcC90434693de4b8bede3151884cab89', str(private_to_stark_key(7654321)), '100', '0x4A26C7daCcC90434693de4b8bede3151884cab89', '5']))
+                     expire_at=5,
+                     nonce=DEFAULT_NONCE). \
+        invoke(signature=sign_stark_inputs(1234567, ['1', '50', '0x4A26C7daCcC90434693de4b8bede3151884cab89', str(private_to_stark_key(7654321)), '100', '0x4A26C7daCcC90434693de4b8bede3151884cab89', '5', str(DEFAULT_NONCE)]))
 
     return fluence_contract, escrow_contract, starknet
 
@@ -99,10 +101,10 @@ async def test_successful_escrow():
     fluence_contract, escrow_contract, starknet = await create_escrow()
 
     set_block_timestamp(starknet.state, 3)
-    await escrow_contract.fulfill_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.fulfill_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(7654321, ['1', str(DEFAULT_NONCE)]))
 
     set_block_timestamp(starknet.state, 4)
-    await escrow_contract.client_commit_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(1234567, ['1']))
+    await escrow_contract.client_commit_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(1234567, ['1', str(DEFAULT_NONCE)]))
 
     exec_info = await escrow_contract.get_escrow(1).call()
     assert exec_info.result[0].fulfilled_at == 3
@@ -120,7 +122,7 @@ async def test_early_cancelation():
     fluence_contract, escrow_contract, starknet = await create_escrow()
 
     set_block_timestamp(starknet.state, 3)
-    await escrow_contract.cancel_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(1234567, ['1']))
+    await escrow_contract.cancel_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(1234567, ['1', str(DEFAULT_NONCE)]))
 
     exec_info = await escrow_contract.get_escrow(1).call()
     assert exec_info.result[0].fulfilled_at == 0
@@ -138,13 +140,13 @@ async def test_approved_cancelation():
     fluence_contract, escrow_contract, starknet = await create_escrow()
 
     set_block_timestamp(starknet.state, 3)
-    await escrow_contract.fulfill_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.fulfill_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(7654321, ['1', str(DEFAULT_NONCE)]))
 
     set_block_timestamp(starknet.state, 4)
-    await escrow_contract.cancel_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(1234567, ['1']))
+    await escrow_contract.cancel_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(1234567, ['1', str(DEFAULT_NONCE)]))
 
     set_block_timestamp(starknet.state, 5)
-    await escrow_contract.approve_cancelation_request(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.approve_cancelation_request(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(7654321, ['1', str(DEFAULT_NONCE)]))
 
     exec_info = await escrow_contract.get_escrow(1).call()
     assert exec_info.result[0].fulfilled_at == 3
@@ -161,13 +163,13 @@ async def test_declined_cancelation():
     fluence_contract, escrow_contract, starknet = await create_escrow()
 
     set_block_timestamp(starknet.state, 3)
-    await escrow_contract.fulfill_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.fulfill_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(7654321, ['1', str(DEFAULT_NONCE)]))
 
     set_block_timestamp(starknet.state, 4)
-    await escrow_contract.cancel_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(1234567, ['1']))
+    await escrow_contract.cancel_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(1234567, ['1', str(DEFAULT_NONCE)]))
 
     set_block_timestamp(starknet.state, 5)
-    await escrow_contract.decline_cancelation_request(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.decline_cancelation_request(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(7654321, ['1', str(DEFAULT_NONCE)]))
 
     exec_info = await escrow_contract.get_escrow(1).call()
     assert exec_info.result[0].fulfilled_at == 3
@@ -185,10 +187,10 @@ async def test_vendor_deadline_commit():
     fluence_contract, escrow_contract, starknet = await create_escrow()
 
     set_block_timestamp(starknet.state, 3)
-    await escrow_contract.fulfill_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.fulfill_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(7654321, ['1', str(DEFAULT_NONCE)]))
 
     set_block_timestamp(starknet.state, 9)
-    await escrow_contract.vendor_commit_escrow(escrow_id=1).invoke(signature=sign_stark_inputs(7654321, ['1']))
+    await escrow_contract.vendor_commit_escrow(escrow_id=1, nonce=DEFAULT_NONCE).invoke(signature=sign_stark_inputs(7654321, ['1', str(DEFAULT_NONCE)]))
 
     exec_info = await escrow_contract.get_escrow(1).call()
     assert exec_info.result[0].fulfilled_at == 3
